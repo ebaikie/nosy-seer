@@ -585,7 +585,7 @@ function addMapLayers() {
     data: { type: 'FeatureCollection', features: [] },
     cluster: true,
     clusterMaxZoom: 13,
-    clusterRadius: 45,
+    clusterRadius: 50,
   });
 
   map.addLayer({
@@ -594,10 +594,11 @@ function addMapLayers() {
     source: 'cameras',
     filter: ['has', 'point_count'],
     paint: {
-      'circle-color': ['step', ['get', 'point_count'], '#38bdf8', 6, '#0ea5e9', 15, '#0284c7'],
+      'circle-color': '#0ea5e9',
       'circle-radius': ['step', ['get', 'point_count'], 16, 6, 22, 15, 28],
       'circle-stroke-width': 2,
       'circle-stroke-color': '#0f172a',
+      'circle-opacity': 1,
     },
   });
 
@@ -607,7 +608,7 @@ function addMapLayers() {
     source: 'cameras',
     filter: ['has', 'point_count'],
     layout: {
-      'text-field': '{point_count_abbreviated}',
+      'text-field': ['to-string', ['get', 'point_count']],
       'text-font': ['Noto Sans Bold', 'Noto Sans Regular'],
       'text-size': 12,
     },
@@ -620,19 +621,31 @@ function addMapLayers() {
     source: 'cameras',
     filter: ['!', ['has', 'point_count']],
     paint: {
-      'circle-color': ['get', 'color'],
+      'circle-color': ['match', ['get', 'category'],
+        'traffic', '#f59e0b',
+        'river',   '#06b6d4',
+        'surf',    '#8b5cf6',
+        'port',    '#ec4899',
+        'airport', '#10b981',
+        'scenic',  '#64748b',
+        '#94a3b8',
+      ],
       'circle-radius': 7,
       'circle-stroke-width': 2,
       'circle-stroke-color': '#0f172a',
+      'circle-opacity': 1,
     },
   });
 
-  // Cluster click → zoom in to expand
-  map.on('click', 'clusters', e => {
+  // Cluster click → zoom in to expand (Promise API for MapLibre v4)
+  map.on('click', 'clusters', async e => {
     const [f] = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
-    map.getSource('cameras').getClusterExpansionZoom(f.properties.cluster_id, (err, zoom) => {
-      if (!err) map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.5 });
-    });
+    try {
+      const zoom = await map.getSource('cameras').getClusterExpansionZoom(f.properties.cluster_id);
+      map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.5 });
+    } catch (_) {
+      map.easeTo({ center: f.geometry.coordinates, zoom: map.getZoom() + 2 });
+    }
   });
 
   // Individual pin click → select camera
