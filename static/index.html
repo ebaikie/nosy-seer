@@ -6,6 +6,7 @@
   <title>nosy-seer</title>
   <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -32,20 +33,68 @@
 
     #detail {
       margin-top: 16px; background: #1e293b; border-radius: 10px;
-      padding: 16px; display: none; gap: 16px; align-items: flex-start;
+      padding: 16px; display: none; gap: 16px;
+      align-items: flex-start; flex-wrap: wrap;
     }
     #detail.show { display: flex; }
+
+    /* shared media slot — img / video / iframe take the same position */
     #detail-img {
       width: 260px; min-height: 160px; object-fit: cover;
       border-radius: 8px; background: #0f172a; flex-shrink: 0;
       cursor: pointer; transition: opacity 0.15s;
     }
     #detail-img:hover { opacity: 0.85; }
+    #detail-video {
+      width: 360px; height: 202px; border-radius: 8px;
+      background: #000; flex-shrink: 0; display: none;
+    }
+    #detail-embed {
+      width: 360px; height: 270px; border-radius: 8px;
+      border: none; flex-shrink: 0; display: none; background: #000;
+    }
+
+    #detail .info { flex: 1; min-width: 180px; }
     #detail .info h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
     #detail .info .meta { font-size: 12px; color: #64748b; margin-bottom: 6px; }
     #detail .info .desc { font-size: 13px; color: #94a3b8; line-height: 1.5; }
     #detail .info a { color: #38bdf8; font-size: 12px; margin-top: 10px; display: inline-block; }
 
+    /* ── Timelapse ────────────────────────────────────────────── */
+    #timelapse {
+      width: 100%; display: none; flex-direction: column; gap: 10px;
+      border-top: 1px solid #334155; padding-top: 12px; margin-top: 4px;
+    }
+    #timelapse.show { display: flex; }
+    .tl-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .tl-bar .tl-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.6px; }
+    .tl-bar .tl-ts { font-size: 12px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+    .tl-bar .tl-counter { font-size: 12px; color: #64748b; }
+    .tl-controls { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    #tl-play-btn {
+      background: #334155; border: none; color: #e2e8f0;
+      width: 30px; height: 28px; border-radius: 6px; cursor: pointer;
+      font-size: 12px; display: flex; align-items: center; justify-content: center;
+    }
+    #tl-play-btn:hover { background: #475569; }
+    #tl-fps {
+      background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+      border-radius: 5px; padding: 3px 6px; font-size: 12px;
+      width: auto;
+    }
+    #tl-live-btn {
+      background: none; border: 1px solid #334155; color: #64748b;
+      border-radius: 5px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+    }
+    #tl-live-btn.active { border-color: #34d399; color: #34d399; }
+    #tl-scrubber {
+      width: 100%; height: 4px; cursor: pointer;
+      accent-color: #38bdf8;
+    }
+
+    /* ── Grid ─────────────────────────────────────────────────── */
     #grid { margin-top: 24px; }
     #grid h3 { font-size: 12px; color: #64748b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
     #grid-items {
@@ -109,7 +158,7 @@
     .btn-primary { background: #0ea5e9; color: #fff; }
     .btn-primary:hover { background: #38bdf8; }
     .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 5px; }
-    .btn-ghost { background: #334155; color: #e2e8f0; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
+    .btn-ghost  { background: #334155; color: #e2e8f0; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
     .btn-danger { background: #7f1d1d; color: #fca5a5; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
     .btn-edit   { background: #1e3a5f; color: #93c5fd; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
     hr { border: none; border-top: 1px solid #1e293b; margin: 24px 0; }
@@ -122,7 +171,7 @@
     .b-embed    { background: #1e3a5f; color: #60a5fa; }
     .b-inactive { background: #1f2937; color: #6b7280; }
 
-    /* ── Login form ───────────────────────────────────────────── */
+    /* ── Login ────────────────────────────────────────────────── */
     #admin-login {
       max-width: 360px; margin: 40px auto; background: #1e293b;
       border-radius: 12px; padding: 32px; border: 1px solid #334155;
@@ -132,7 +181,6 @@
     #admin-panel { display: none; }
     #admin-panel.show { display: block; }
 
-    /* edit mode banner */
     #edit-banner {
       display: none; background: #1e3a5f; border: 1px solid #2563eb44;
       border-radius: 8px; padding: 8px 14px; margin-bottom: 14px;
@@ -144,21 +192,16 @@
       color: #93c5fd; border-radius: 5px; padding: 2px 10px;
       font-size: 12px; cursor: pointer;
     }
-
     #picker-map {
       height: 260px; border-radius: 8px; overflow: hidden;
       border: 1px solid #334155; margin-top: 4px; cursor: crosshair;
     }
-    #picker-map .maplibregl-canvas { cursor: crosshair; }
-
     #logout-btn {
       display: none; background: none; border: 1px solid #334155;
       color: #94a3b8; padding: 4px 12px; border-radius: 6px;
       cursor: pointer; font-size: 13px;
     }
     #logout-btn:hover { border-color: #64748b; color: #e2e8f0; }
-
-    /* inline status messages */
     .msg-ok  { color: #34d399; font-size: 13px; margin-top: 8px; }
     .msg-err { color: #f87171; font-size: 13px; margin-top: 8px; }
   </style>
@@ -178,15 +221,41 @@
 <!-- ── View tab ─────────────────────────────────────────────────── -->
 <div id="view" class="tab active">
   <div id="map"></div>
+
   <div id="detail">
-    <img id="detail-img" src="" alt="" onclick="openLightboxFromDetail()">
+    <!-- media: one of img / video / iframe shown at a time -->
+    <img     id="detail-img"   src="" alt="" onclick="openLightboxFromDetail()">
+    <video   id="detail-video" controls playsinline></video>
+    <iframe  id="detail-embed" src="" allowfullscreen allow="autoplay; encrypted-media"></iframe>
+
     <div class="info">
       <h2 id="detail-name"></h2>
       <div class="meta" id="detail-meta"></div>
       <div class="desc" id="detail-desc"></div>
       <a id="detail-link" href="#" target="_blank" rel="noopener">Source page ↗</a>
     </div>
+
+    <!-- timelapse — full-width second row, capture cameras only -->
+    <div id="timelapse">
+      <div class="tl-bar">
+        <span class="tl-label">History</span>
+        <span id="tl-ts"></span>
+        <span id="tl-counter"></span>
+        <div class="tl-controls">
+          <button id="tl-play-btn" onclick="tlToggle()" title="Play / Pause">▶</button>
+          <select id="tl-fps" title="Playback speed">
+            <option value="2">2 fps</option>
+            <option value="5" selected>5 fps</option>
+            <option value="10">10 fps</option>
+            <option value="24">24 fps</option>
+          </select>
+          <button id="tl-live-btn" class="active" onclick="tlLive()">● Live</button>
+        </div>
+      </div>
+      <input type="range" id="tl-scrubber" min="0" value="0" oninput="tlScrub(+this.value)">
+    </div>
   </div>
+
   <div id="grid">
     <h3>Latest captures</h3>
     <div id="grid-items"></div>
@@ -195,7 +264,6 @@
 
 <!-- ── Admin tab ────────────────────────────────────────────────── -->
 <div id="admin" class="tab">
-
   <div id="admin-login">
     <h2>Admin login</h2>
     <div>
@@ -214,8 +282,6 @@
   </div>
 
   <div id="admin-panel">
-
-    <!-- Add / Edit form -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div id="form-title" class="section-title" style="margin:0">Add Camera</div>
     </div>
@@ -248,7 +314,7 @@
           <label>Capture policy</label>
           <select name="capture_policy">
             <option value="capture">capture (pull stills)</option>
-            <option value="embed_only">embed only (iframe / link)</option>
+            <option value="embed_only">embed only (HLS / iframe)</option>
           </select>
         </div>
         <div>
@@ -268,8 +334,8 @@
           <input name="snapshot_url" placeholder="https://www.trafficnz.info/camera/740.jpg">
         </div>
         <div class="full">
-          <label>Stream URL</label>
-          <input name="stream_url" placeholder="https://…">
+          <label>Stream URL (HLS .m3u8 or embed URL)</label>
+          <input name="stream_url" placeholder="https://…/stream.m3u8">
         </div>
         <div class="full">
           <label>Source page URL</label>
@@ -286,46 +352,26 @@
     </form>
 
     <hr>
-
-    <!-- Camera table -->
     <div class="section-title">All Cameras</div>
     <table>
       <thead>
-        <tr>
-          <th>Name</th>
-          <th>Category</th>
-          <th>Policy</th>
-          <th>Keep N</th>
-          <th></th>
-        </tr>
+        <tr><th>Name</th><th>Category</th><th>Policy</th><th>Keep N</th><th></th></tr>
       </thead>
       <tbody id="cam-tbody"></tbody>
     </table>
 
     <hr>
-
-    <!-- Change password -->
     <div class="section-title">Change Password</div>
     <div style="max-width:360px;display:grid;gap:10px">
-      <div>
-        <label>Current password</label>
-        <input id="pw-current" type="password" autocomplete="current-password">
-      </div>
-      <div>
-        <label>New password</label>
-        <input id="pw-new" type="password" autocomplete="new-password">
-      </div>
-      <div>
-        <label>Confirm new password</label>
-        <input id="pw-confirm" type="password" autocomplete="new-password">
-      </div>
+      <div><label>Current password</label><input id="pw-current" type="password" autocomplete="current-password"></div>
+      <div><label>New password</label><input id="pw-new" type="password" autocomplete="new-password"></div>
+      <div><label>Confirm new password</label><input id="pw-confirm" type="password" autocomplete="new-password"></div>
       <div style="display:flex;align-items:center;gap:12px">
         <button class="btn btn-primary" onclick="doChangePassword()">Change password</button>
         <span id="pw-msg"></span>
       </div>
     </div>
-
-  </div><!-- /admin-panel -->
+  </div>
 </div>
 
 <!-- ── Lightbox ──────────────────────────────────────────────────── -->
@@ -338,7 +384,7 @@
 <script>
 const CAT_COLORS = {
   traffic:'#f59e0b', river:'#06b6d4', surf:'#8b5cf6',
-  port:'#ec4899',    airport:'#10b981', scenic:'#64748b'
+  port:'#ec4899', airport:'#10b981', scenic:'#64748b'
 };
 
 let cameras = [];
@@ -348,6 +394,13 @@ let selected = null;
 let lastTs = {};
 let loggedIn = false;
 let editingId = null;
+let hlsInstance = null;
+
+// ── Timelapse state ───────────────────────────────────────────────────────────
+let tlFrames = [];
+let tlIndex  = 0;
+let tlTimer  = null;
+let tlIsLive = true;
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -372,20 +425,16 @@ async function doLogin() {
   const username = document.getElementById('login-user').value.trim();
   const password = document.getElementById('login-pass').value;
   const res = await fetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
   });
   const errEl = document.getElementById('login-error');
   if (res.ok) {
-    errEl.style.display = 'none';
-    loggedIn = true;
+    errEl.style.display = 'none'; loggedIn = true;
     document.getElementById('logout-btn').style.display = '';
     document.getElementById('login-pass').value = '';
     refreshAdminView();
-  } else {
-    errEl.style.display = '';
-  }
+  } else { errEl.style.display = ''; }
 }
 
 async function doLogout() {
@@ -404,20 +453,15 @@ async function doChangePassword() {
   if (next !== confirm) { msg.className='msg-err'; msg.textContent='Passwords do not match.'; return; }
   if (next.length < 4)  { msg.className='msg-err'; msg.textContent='Min 4 characters.'; return; }
   const res = await fetch('/api/change-password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ current_password: current, new_password: next }),
   });
   if (res.ok) {
-    msg.className = 'msg-ok';
-    msg.textContent = 'Password changed.';
-    document.getElementById('pw-current').value = '';
-    document.getElementById('pw-new').value = '';
-    document.getElementById('pw-confirm').value = '';
+    msg.className = 'msg-ok'; msg.textContent = 'Password changed.';
+    ['pw-current','pw-new','pw-confirm'].forEach(id => document.getElementById(id).value = '');
   } else {
-    const data = await res.json();
     msg.className = 'msg-err';
-    msg.textContent = data.detail || 'Error.';
+    msg.textContent = (await res.json()).detail || 'Error.';
   }
 }
 
@@ -427,9 +471,7 @@ function showTab(t) {
   document.querySelectorAll('nav button').forEach(b =>
     b.classList.toggle('active', b.textContent.toLowerCase() === t)
   );
-  document.querySelectorAll('.tab').forEach(d =>
-    d.classList.toggle('active', d.id === t)
-  );
+  document.querySelectorAll('.tab').forEach(d => d.classList.toggle('active', d.id === t));
   if (t === 'admin') refreshAdminView();
 }
 
@@ -439,8 +481,7 @@ function initMap() {
   map = new maplibregl.Map({
     container: 'map',
     style: 'https://tiles.openfreemap.org/styles/liberty',
-    center: [176.85, -39.49],
-    zoom: 8,
+    center: [176.85, -39.49], zoom: 8,
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
 }
@@ -451,13 +492,17 @@ function putMarker(cam) {
   const el = document.createElement('div');
   el.style.cssText = `width:14px;height:14px;border-radius:50%;border:2px solid #0f172a;cursor:pointer;background:${CAT_COLORS[cam.category]||'#94a3b8'}`;
   el.title = cam.name;
-  const m = new maplibregl.Marker(el).setLngLat([cam.lon, cam.lat]).addTo(map);
+  new maplibregl.Marker(el).setLngLat([cam.lon, cam.lat]).addTo(map);
   el.addEventListener('click', () => selectCam(cam));
-  markers[cam.id] = m;
+  markers[cam.id] = { remove: () => el.remove() };
 }
 
-function selectCam(cam) {
+async function selectCam(cam) {
   selected = cam;
+  tlStop();
+  tlFrames = [];
+  tlIsLive = true;
+
   const d = document.getElementById('detail');
   d.classList.add('show');
   document.getElementById('detail-name').textContent = cam.name;
@@ -467,18 +512,145 @@ function selectCam(cam) {
   const lnk = document.getElementById('detail-link');
   lnk.href = cam.source_page || '#';
   lnk.style.display = cam.source_page ? '' : 'none';
-  refreshDetailImg(cam);
+
+  showMedia(cam);
+  d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  if (cam.capture_policy === 'capture') {
+    const frames = await fetch(`/api/cameras/${cam.id}/stills`).then(r => r.json());
+    tlFrames = frames;
+    tlSetup(cam.id);
+  }
 }
 
-function refreshDetailImg(cam) {
-  const img = document.getElementById('detail-img');
+// ── Media display ─────────────────────────────────────────────────────────────
+
+function showMedia(cam) {
+  const img   = document.getElementById('detail-img');
+  const video = document.getElementById('detail-video');
+  const embed = document.getElementById('detail-embed');
+
+  // destroy any running HLS instance
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+  video.pause(); video.src = '';
+  embed.src = '';
+
   if (cam.capture_policy === 'capture') {
     img.src = `/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id] || 0}`;
     img.style.cursor = 'pointer';
+    img.style.display = '';
+    video.style.display = 'none';
+    embed.style.display = 'none';
+  } else if (cam.stream_url) {
+    img.style.display = 'none';
+    if (cam.stream_url.includes('.m3u8')) {
+      video.style.display = ''; embed.style.display = 'none';
+      if (Hls.isSupported()) {
+        hlsInstance = new Hls();
+        hlsInstance.loadSource(cam.stream_url);
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) {
+            hlsInstance.destroy(); hlsInstance = null;
+            video.style.display = 'none';
+            embed.src = cam.stream_url;
+            embed.style.display = '';
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = cam.stream_url;
+      } else {
+        video.style.display = 'none';
+        embed.src = cam.stream_url; embed.style.display = '';
+      }
+    } else {
+      video.style.display = 'none';
+      embed.src = cam.stream_url; embed.style.display = '';
+    }
   } else {
-    img.src = '';
-    img.style.cursor = 'default';
+    img.src = ''; img.style.cursor = 'default';
+    img.style.display = ''; video.style.display = 'none'; embed.style.display = 'none';
   }
+}
+
+function refreshDetailLive(cam) {
+  if (cam.capture_policy !== 'capture') return;
+  const img = document.getElementById('detail-img');
+  img.src = `/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id] || 0}`;
+}
+
+// ── Timelapse ─────────────────────────────────────────────────────────────────
+
+function tlSetup(camId) {
+  const tl = document.getElementById('timelapse');
+  if (tlFrames.length < 2) { tl.classList.remove('show'); return; }
+
+  tl.classList.add('show');
+  const scrubber = document.getElementById('tl-scrubber');
+  scrubber.max = tlFrames.length - 1;
+  scrubber.value = tlFrames.length - 1;
+  tlIndex = tlFrames.length - 1;
+  tlIsLive = true;
+  tlUpdateLiveBtn();
+  tlUpdateCounter();
+}
+
+function tlShowFrame(idx, camId) {
+  camId = camId || (selected && selected.id);
+  if (!camId || !tlFrames.length) return;
+  idx = Math.max(0, Math.min(idx, tlFrames.length - 1));
+  tlIndex = idx;
+  const ts = tlFrames[idx];
+  document.getElementById('detail-img').src = `/stills/${camId}/${ts}.jpg`;
+  document.getElementById('tl-ts').textContent = fmtTsFull(ts);
+  document.getElementById('tl-counter').textContent = `${idx + 1} / ${tlFrames.length}`;
+  document.getElementById('tl-scrubber').value = idx;
+}
+
+function tlScrub(idx) {
+  if (tlIsLive) { tlIsLive = false; tlUpdateLiveBtn(); }
+  tlStop();
+  tlShowFrame(idx);
+}
+
+function tlToggle() {
+  if (tlTimer) { tlStop(); return; }
+  if (tlIsLive) { tlIsLive = false; tlUpdateLiveBtn(); }
+  // if at end, restart from beginning
+  if (tlIndex >= tlFrames.length - 1) tlIndex = 0;
+  const fps = parseInt(document.getElementById('tl-fps').value) || 5;
+  document.getElementById('tl-play-btn').textContent = '⏸';
+  tlTimer = setInterval(() => {
+    if (tlIndex >= tlFrames.length - 1) { tlStop(); return; }
+    tlShowFrame(tlIndex + 1);
+  }, 1000 / fps);
+}
+
+function tlStop() {
+  if (tlTimer) { clearInterval(tlTimer); tlTimer = null; }
+  document.getElementById('tl-play-btn').textContent = '▶';
+}
+
+function tlLive() {
+  tlStop();
+  tlIsLive = true;
+  tlUpdateLiveBtn();
+  document.getElementById('tl-ts').textContent = '';
+  if (selected) {
+    refreshDetailLive(selected);
+    document.getElementById('tl-counter').textContent = '';
+    document.getElementById('tl-scrubber').value = tlFrames.length - 1;
+    tlIndex = tlFrames.length - 1;
+  }
+}
+
+function tlUpdateLiveBtn() {
+  document.getElementById('tl-live-btn').classList.toggle('active', tlIsLive);
+}
+
+function tlUpdateCounter() {
+  document.getElementById('tl-counter').textContent = '';
+  document.getElementById('tl-ts').textContent = '';
 }
 
 // ── Grid ──────────────────────────────────────────────────────────────────────
@@ -504,26 +676,26 @@ function selectCamById(id) {
 
 // ── Lightbox ──────────────────────────────────────────────────────────────────
 
-function openLightbox(camId, camName) {
-  const ts = lastTs[camId] || Date.now();
-  document.getElementById('lightbox-img').src = `/stills/${camId}/latest.jpg?t=${ts}`;
+function openLightbox(camId, camName, url) {
+  const src = url || `/stills/${camId}/latest.jpg?t=${lastTs[camId] || Date.now()}`;
+  document.getElementById('lightbox-img').src = src;
   document.getElementById('lightbox-caption').textContent = camName || '';
   document.getElementById('lightbox').classList.add('show');
 }
 
 function openLightboxFromDetail() {
-  if (selected && selected.capture_policy === 'capture') {
-    openLightbox(selected.id, selected.name);
-  }
+  if (!selected || selected.capture_policy !== 'capture') return;
+  const src = tlIsLive
+    ? `/stills/${selected.id}/latest.jpg?t=${lastTs[selected.id] || Date.now()}`
+    : `/stills/${selected.id}/${tlFrames[tlIndex]}.jpg`;
+  openLightbox(selected.id, selected.name, src);
 }
 
 function closeLightbox() {
   document.getElementById('lightbox').classList.remove('show');
 }
 
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeLightbox();
-});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -550,13 +722,11 @@ function connectSSE() {
       const tsEl = document.getElementById(`card-ts-${camera_id}`);
       if (tsEl) tsEl.textContent = fmtTs(ts);
     }
-    if (selected && selected.id === camera_id) refreshDetailImg(selected);
+    if (selected && selected.id === camera_id && tlIsLive) refreshDetailLive(selected);
   });
   es.onerror = () => {
-    dot.textContent = '● reconnecting…';
-    dot.style.color = '#f59e0b';
-    es.close();
-    setTimeout(connectSSE, 5000);
+    dot.textContent = '● reconnecting…'; dot.style.color = '#f59e0b';
+    es.close(); setTimeout(connectSSE, 5000);
   };
 }
 
@@ -573,33 +743,25 @@ async function loadAdminTable() {
           : '<span class="badge b-embed">embed</span>')
       : '<span class="badge b-inactive">inactive</span>';
     return `<tr>
-      <td>${esc(cam.name)}</td>
-      <td>${cam.category}</td>
-      <td>${badge}</td>
+      <td>${esc(cam.name)}</td><td>${cam.category}</td><td>${badge}</td>
       <td>${cam.keep_last_n === 0 ? '∞' : cam.keep_last_n}</td>
       <td style="white-space:nowrap;display:flex;gap:6px">
         <button class="btn-edit btn-sm" onclick="editCam(${cam.id})">Edit</button>
         <button class="btn-ghost btn-sm" onclick="toggleActive(${cam.id},${cam.active})">
-          ${cam.active ? 'Disable' : 'Enable'}
-        </button>
+          ${cam.active ? 'Disable' : 'Enable'}</button>
         <button class="btn-danger btn-sm" onclick="delCam(${cam.id},'${esc(cam.name)}')">Delete</button>
-      </td>
-    </tr>`;
+      </td></tr>`;
   }).join('');
 }
-
-// ── Edit ──────────────────────────────────────────────────────────────────────
 
 function editCam(id) {
   const cam = adminCams.find(c => c.id === id);
   if (!cam) return;
   editingId = id;
-
   document.getElementById('form-title').textContent = 'Edit Camera';
   document.getElementById('edit-banner-name').textContent = cam.name;
   document.getElementById('edit-banner').classList.add('show');
   document.getElementById('form-submit-btn').textContent = 'Save changes';
-
   const f = document.getElementById('add-form');
   f.querySelector('[name=name]').value = cam.name || '';
   f.querySelector('[name=description]').value = cam.description || '';
@@ -611,12 +773,10 @@ function editCam(id) {
   f.querySelector('[name=keep_last_n]').value = cam.keep_last_n ?? 1;
   f.querySelector('[name=lat]').value = cam.lat ?? '';
   f.querySelector('[name=lon]').value = cam.lon ?? '';
-
   if (cam.lat && cam.lon && pickerMap) {
     setPickerLocation(cam.lat, cam.lon);
     pickerMap.easeTo({ center: [cam.lon, cam.lat], zoom: 12 });
   }
-
   f.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -630,47 +790,32 @@ function cancelEdit() {
   resetPicker();
 }
 
-// ── Form submit ───────────────────────────────────────────────────────────────
-
 document.getElementById('add-form').addEventListener('submit', async e => {
   e.preventDefault();
   const body = {};
-
   if (editingId) {
-    // include all fields; empty → null (allows clearing optional fields)
     for (const [k, v] of new FormData(e.target).entries()) {
-      if (['lat','lon'].includes(k))      body[k] = v === '' ? null : Number(v);
-      else if (k === 'keep_last_n')       body[k] = v === '' ? 1 : Number(v);
-      else                                body[k] = v === '' ? null : v;
+      if (['lat','lon'].includes(k))  body[k] = v === '' ? null : Number(v);
+      else if (k === 'keep_last_n')   body[k] = v === '' ? 1 : Number(v);
+      else                            body[k] = v === '' ? null : v;
     }
   } else {
-    // new camera: skip empty strings to keep DB defaults
     for (const [k, v] of new FormData(e.target).entries()) {
       if (v === '') continue;
       body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
     }
   }
-
-  const url    = editingId ? `/api/cameras/${editingId}` : '/api/cameras';
+  const url = editingId ? `/api/cameras/${editingId}` : '/api/cameras';
   const method = editingId ? 'PATCH' : 'POST';
-  const res = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.ok) {
     const cam = await res.json();
     if (editingId) {
       cameras = cameras.map(c => c.id === editingId ? cam : c);
       if (markers[cam.id]) { markers[cam.id].remove(); delete markers[cam.id]; }
-      putMarker(cam);
-      renderGrid();
-      cancelEdit();
+      putMarker(cam); renderGrid(); cancelEdit();
     } else {
-      cameras.push(cam);
-      putMarker(cam);
-      renderGrid();
+      cameras.push(cam); putMarker(cam); renderGrid();
       e.target.reset();
       e.target.querySelector('[name=keep_last_n]').value = '1';
       resetPicker();
@@ -681,12 +826,10 @@ document.getElementById('add-form').addEventListener('submit', async e => {
 
 async function toggleActive(id, current) {
   await fetch(`/api/cameras/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ active: !current }),
   });
-  await loadCameras();
-  loadAdminTable();
+  await loadCameras(); loadAdminTable();
 }
 
 async function delCam(id, name) {
@@ -701,9 +844,7 @@ async function delCam(id, name) {
 
 // ── Location picker ───────────────────────────────────────────────────────────
 
-let pickerMap = null;
-let pickerMarker = null;
-let pickerInited = false;
+let pickerMap = null, pickerMarker = null, pickerInited = false;
 
 function initPickerMap() {
   if (pickerInited) return;
@@ -711,8 +852,7 @@ function initPickerMap() {
   pickerMap = new maplibregl.Map({
     container: 'picker-map',
     style: 'https://tiles.openfreemap.org/styles/liberty',
-    center: [176.85, -39.49],
-    zoom: 8,
+    center: [176.85, -39.49], zoom: 8,
   });
   pickerMap.on('click', e => setPickerLocation(e.lngLat.lat, e.lngLat.lng, true));
 }
@@ -724,12 +864,9 @@ function setPickerLocation(lat, lng, fromClick = false) {
     pickerMarker = new maplibregl.Marker({ draggable: true, color: '#38bdf8' })
       .setLngLat([lng, lat]).addTo(pickerMap);
     pickerMarker.on('dragend', () => {
-      const p = pickerMarker.getLngLat();
-      setPickerLocation(p.lat, p.lng);
+      const p = pickerMarker.getLngLat(); setPickerLocation(p.lat, p.lng);
     });
-  } else {
-    pickerMarker.setLngLat([lng, lat]);
-  }
+  } else { pickerMarker.setLngLat([lng, lat]); }
   if (fromClick) pickerMap.easeTo({ center: [lng, lat] });
 }
 
@@ -751,14 +888,18 @@ function resetPicker() {
 function fmtTs(ts) {
   if (!ts) return '—';
   const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
-  if (!m) return ts;
-  return `${m[4]}:${m[5]}:${m[6]} UTC`;
+  return m ? `${m[4]}:${m[5]}:${m[6]} UTC` : ts;
+}
+
+function fmtTsFull(ts) {
+  if (!ts) return '';
+  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]} UTC` : ts;
 }
 
 function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

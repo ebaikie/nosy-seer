@@ -329,6 +329,14 @@ def delete_camera(cam_id: int, _: None = Depends(require_auth)):
         c.commit()
 
 
+@app.get("/api/cameras/{cam_id}/stills")
+def list_stills(cam_id: int):
+    cam_dir = STILLS_DIR / str(cam_id)
+    if not cam_dir.exists():
+        return []
+    return sorted(f.stem for f in cam_dir.glob("[0-9]*.jpg"))[-2000:]
+
+
 @app.get("/api/events/stills")
 async def sse_stills(request: Request):
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
