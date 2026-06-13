@@ -206,6 +206,30 @@
     .msg-err { color: #f87171; font-size: 13px; margin-top: 8px; }
     .table-wrap { overflow-x: auto; }
 
+    /* ── Map hover popup ─────────────────────────────────────── */
+    .maplibregl-popup-content {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 8px; padding: 0; overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.55);
+      min-width: 180px; max-width: 220px;
+    }
+    .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color:    #1e293b !important; }
+    .maplibregl-popup-anchor-top    .maplibregl-popup-tip { border-bottom-color: #1e293b !important; }
+    .maplibregl-popup-anchor-left   .maplibregl-popup-tip { border-right-color:  #1e293b !important; }
+    .maplibregl-popup-anchor-right  .maplibregl-popup-tip { border-left-color:   #1e293b !important; }
+    .maplibregl-popup-anchor-bottom-left  .maplibregl-popup-tip,
+    .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color:    #1e293b !important; }
+    .maplibregl-popup-anchor-top-left     .maplibregl-popup-tip,
+    .maplibregl-popup-anchor-top-right    .maplibregl-popup-tip { border-bottom-color: #1e293b !important; }
+    .map-popup img { width: 100%; height: 110px; object-fit: cover; display: block; }
+    .popup-body { padding: 8px 10px 10px; }
+    .popup-name { font-size: 13px; font-weight: 600; color: #f8fafc; line-height: 1.3; }
+    .popup-desc {
+      font-size: 11px; color: #94a3b8; margin-top: 3px; line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .popup-meta { font-size: 11px; color: #64748b; margin-top: 5px; }
+
     /* ── Mobile ──────────────────────────────────────────────── */
     @media (max-width: 600px) {
       header { padding: 8px 12px; gap: 8px; }
@@ -425,7 +449,7 @@ const CAT_COLORS = {
 
 let cameras = [];
 let adminCams = [];
-let map, markers = {};
+let map, hoverPopup = null;
 let selected = null;
 let lastTs = {};
 let loggedIn = false;
@@ -513,6 +537,31 @@ function showTab(t) {
 
 // ── Map ───────────────────────────────────────────────────────────────────────
 
+function camToFeature(cam) {
+  if (!cam.lat || !cam.lon) return null;
+  return {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [cam.lon, cam.lat] },
+    properties: {
+      cam_id: cam.id,
+      name: cam.name,
+      category: cam.category,
+      capture_policy: cam.capture_policy,
+      description: cam.description || '',
+      color: CAT_COLORS[cam.category] || '#94a3b8',
+    },
+  };
+}
+
+function updateMapSource() {
+  const src = map && map.getSource('cameras');
+  if (!src) return;
+  src.setData({
+    type: 'FeatureCollection',
+    features: cameras.map(camToFeature).filter(Boolean),
+  });
+}
+
 function initMap() {
   map = new maplibregl.Map({
     container: 'map',
@@ -520,21 +569,112 @@ function initMap() {
     center: [176.85, -39.49], zoom: 8,
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  map.on('load', () => {
+    addMapLayers();
+    updateMapSource();
+  });
 }
 
-function putMarker(cam) {
-  if (!cam.lat || !cam.lon) return;
-  if (markers[cam.id]) markers[cam.id].remove();
-  const el = document.createElement('div');
-  el.style.cssText = `width:14px;height:14px;border-radius:50%;border:2px solid #0f172a;cursor:pointer;background:${CAT_COLORS[cam.category]||'#94a3b8'}`;
-  el.title = cam.name;
-  new maplibregl.Marker(el).setLngLat([cam.lon, cam.lat]).addTo(map);
-  el.addEventListener('click', () => selectCam(cam));
-  markers[cam.id] = { remove: () => el.remove() };
+function addMapLayers() {
+  hoverPopup = new maplibregl.Popup({
+    closeButton: false, closeOnClick: false, offset: 14, maxWidth: '220px',
+  });
+
+  map.addSource('cameras', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+    cluster: true,
+    clusterMaxZoom: 13,
+    clusterRadius: 45,
+  });
+
+  map.addLayer({
+    id: 'clusters',
+    type: 'circle',
+    source: 'cameras',
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-color': ['step', ['get', 'point_count'], '#38bdf8', 6, '#0ea5e9', 15, '#0284c7'],
+      'circle-radius': ['step', ['get', 'point_count'], 16, 6, 22, 15, 28],
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#0f172a',
+    },
+  });
+
+  map.addLayer({
+    id: 'cluster-count',
+    type: 'symbol',
+    source: 'cameras',
+    filter: ['has', 'point_count'],
+    layout: {
+      'text-field': '{point_count_abbreviated}',
+      'text-font': ['Noto Sans Bold', 'Noto Sans Regular'],
+      'text-size': 12,
+    },
+    paint: { 'text-color': '#0f172a' },
+  });
+
+  map.addLayer({
+    id: 'unclustered-point',
+    type: 'circle',
+    source: 'cameras',
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+      'circle-color': ['get', 'color'],
+      'circle-radius': 7,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#0f172a',
+    },
+  });
+
+  // Cluster click → zoom in to expand
+  map.on('click', 'clusters', e => {
+    const [f] = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+    map.getSource('cameras').getClusterExpansionZoom(f.properties.cluster_id, (err, zoom) => {
+      if (!err) map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.5 });
+    });
+  });
+
+  // Individual pin click → select camera
+  map.on('click', 'unclustered-point', e => {
+    const cam = cameras.find(c => c.id === e.features[0].properties.cam_id);
+    if (cam) selectCam(cam);
+  });
+
+  // Cursors
+  ['clusters', 'unclustered-point'].forEach(layer => {
+    map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
+  });
+
+  // Hover popup on individual pins
+  map.on('mouseenter', 'unclustered-point', e => {
+    const props = e.features[0].properties;
+    const cam = cameras.find(c => c.id === props.cam_id);
+    if (!cam) return;
+    const ago = timeAgo(lastTs[cam.id]);
+    const metaParts = [cam.category];
+    if (ago) metaParts.push(ago);
+    const imgHtml = cam.capture_policy === 'capture'
+      ? `<img src="/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id] || 0}" alt="">`
+      : '';
+    const descHtml = cam.description
+      ? `<div class="popup-desc">${esc(cam.description)}</div>` : '';
+    hoverPopup
+      .setLngLat(e.features[0].geometry.coordinates)
+      .setHTML(`<div class="map-popup">${imgHtml}<div class="popup-body">
+        <div class="popup-name">${esc(cam.name)}</div>
+        ${descHtml}
+        <div class="popup-meta">${metaParts.join(' · ')}</div>
+      </div></div>`)
+      .addTo(map);
+  });
+  map.on('mouseleave', 'unclustered-point', () => { hoverPopup.remove(); });
 }
 
 async function selectCam(cam) {
   selected = cam;
+  if (hoverPopup) hoverPopup.remove();
   tlStop();
   tlFrames = [];
   tlIsLive = true;
@@ -737,7 +877,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbo
 
 async function loadCameras() {
   cameras = await fetch('/api/cameras').then(r => r.json());
-  cameras.forEach(putMarker);
+  updateMapSource();
   renderGrid();
 }
 
@@ -853,10 +993,9 @@ document.getElementById('add-form').addEventListener('submit', async e => {
     const cam = await res.json();
     if (editingId) {
       cameras = cameras.map(c => c.id === editingId ? cam : c);
-      if (markers[cam.id]) { markers[cam.id].remove(); delete markers[cam.id]; }
-      putMarker(cam); renderGrid(); cancelEdit();
+      updateMapSource(); renderGrid(); cancelEdit();
     } else {
-      cameras.push(cam); putMarker(cam); renderGrid();
+      cameras.push(cam); updateMapSource(); renderGrid();
       e.target.reset();
       e.target.querySelector('[name=keep_last_n]').value = '1';
       e.target.querySelector('[name=capture_interval_s]').value = '';
@@ -878,7 +1017,7 @@ async function delCam(id, name) {
   if (!confirm(`Delete "${name}"?`)) return;
   await fetch(`/api/cameras/${id}`, { method: 'DELETE' });
   cameras = cameras.filter(c => c.id !== id);
-  if (markers[id]) { markers[id].remove(); delete markers[id]; }
+  updateMapSource();
   renderGrid();
   if (editingId === id) cancelEdit();
   loadAdminTable();
@@ -926,6 +1065,17 @@ function resetPicker() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return '';
+  const diff = Math.floor((Date.now() - new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`)) / 1000);
+  if (diff < 90)    return 'just now';
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
 function fmtTs(ts) {
   if (!ts) return '—';
