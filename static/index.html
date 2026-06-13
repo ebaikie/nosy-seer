@@ -38,7 +38,9 @@
     #detail-img {
       width: 260px; min-height: 160px; object-fit: cover;
       border-radius: 8px; background: #0f172a; flex-shrink: 0;
+      cursor: pointer; transition: opacity 0.15s;
     }
+    #detail-img:hover { opacity: 0.85; }
     #detail .info h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
     #detail .info .meta { font-size: 12px; color: #64748b; margin-bottom: 6px; }
     #detail .info .desc { font-size: 13px; color: #94a3b8; line-height: 1.5; }
@@ -53,12 +55,42 @@
     }
     .card {
       background: #1e293b; border-radius: 8px; overflow: hidden;
-      cursor: pointer; border: 1px solid #334155; transition: border-color 0.15s;
+      border: 1px solid #334155; transition: border-color 0.15s;
     }
-    .card:hover { border-color: #38bdf8; }
-    .card img { width: 100%; height: 130px; object-fit: cover; display: block; background: #0f172a; }
-    .card .card-name { padding: 7px 10px 2px; font-size: 12px; font-weight: 500; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .card .card-ts  { padding: 0 10px 8px; font-size: 11px; color: #64748b; }
+    .card img {
+      width: 100%; height: 130px; object-fit: cover; display: block;
+      background: #0f172a; cursor: pointer;
+      transition: transform 0.18s, opacity 0.18s;
+    }
+    .card img:hover { transform: scale(1.06); opacity: 0.9; }
+    .card .card-name {
+      padding: 7px 10px 2px; font-size: 12px; font-weight: 500;
+      color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer;
+    }
+    .card .card-name:hover { color: #38bdf8; }
+    .card .card-ts { padding: 0 10px 8px; font-size: 11px; color: #64748b; }
+
+    /* ── Lightbox ─────────────────────────────────────────────── */
+    #lightbox {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.88); z-index: 2000;
+      align-items: center; justify-content: center;
+      cursor: pointer; flex-direction: column; gap: 14px;
+    }
+    #lightbox.show { display: flex; }
+    #lightbox img {
+      max-width: 92vw; max-height: 88vh;
+      border-radius: 8px; object-fit: contain;
+      cursor: default; box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    #lightbox-caption { color: #94a3b8; font-size: 13px; }
+    #lightbox-close {
+      position: absolute; top: 16px; right: 20px;
+      background: none; border: none; color: #64748b;
+      font-size: 28px; cursor: pointer; line-height: 1;
+    }
+    #lightbox-close:hover { color: #e2e8f0; }
 
     /* ── Admin tab ────────────────────────────────────────────── */
     #admin { max-width: 800px; }
@@ -79,6 +111,7 @@
     .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 5px; }
     .btn-ghost { background: #334155; color: #e2e8f0; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
     .btn-danger { background: #7f1d1d; color: #fca5a5; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
+    .btn-edit   { background: #1e3a5f; color: #93c5fd; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
     hr { border: none; border-top: 1px solid #1e293b; margin: 24px 0; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th { text-align: left; padding: 8px; color: #64748b; border-bottom: 1px solid #1e293b; font-weight: 500; }
@@ -98,6 +131,20 @@
     #login-error { color: #f87171; font-size: 13px; margin-top: 10px; display: none; }
     #admin-panel { display: none; }
     #admin-panel.show { display: block; }
+
+    /* edit mode banner */
+    #edit-banner {
+      display: none; background: #1e3a5f; border: 1px solid #2563eb44;
+      border-radius: 8px; padding: 8px 14px; margin-bottom: 14px;
+      font-size: 13px; color: #93c5fd; align-items: center; gap: 10px;
+    }
+    #edit-banner.show { display: flex; }
+    #edit-banner button {
+      margin-left: auto; background: none; border: 1px solid #2563eb44;
+      color: #93c5fd; border-radius: 5px; padding: 2px 10px;
+      font-size: 12px; cursor: pointer;
+    }
+
     #picker-map {
       height: 260px; border-radius: 8px; overflow: hidden;
       border: 1px solid #334155; margin-top: 4px; cursor: crosshair;
@@ -110,6 +157,10 @@
       cursor: pointer; font-size: 13px;
     }
     #logout-btn:hover { border-color: #64748b; color: #e2e8f0; }
+
+    /* inline status messages */
+    .msg-ok  { color: #34d399; font-size: 13px; margin-top: 8px; }
+    .msg-err { color: #f87171; font-size: 13px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -124,10 +175,11 @@
   <span id="status">● connecting…</span>
 </header>
 
+<!-- ── View tab ─────────────────────────────────────────────────── -->
 <div id="view" class="tab active">
   <div id="map"></div>
   <div id="detail">
-    <img id="detail-img" src="" alt="">
+    <img id="detail-img" src="" alt="" onclick="openLightboxFromDetail()">
     <div class="info">
       <h2 id="detail-name"></h2>
       <div class="meta" id="detail-meta"></div>
@@ -141,6 +193,7 @@
   </div>
 </div>
 
+<!-- ── Admin tab ────────────────────────────────────────────────── -->
 <div id="admin" class="tab">
 
   <div id="admin-login">
@@ -152,7 +205,7 @@
     <div style="margin-top:12px">
       <label>Password</label>
       <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"
-           onkeydown="if(event.key==='Enter')doLogin()">
+             onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <div style="margin-top:16px">
       <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
@@ -161,83 +214,125 @@
   </div>
 
   <div id="admin-panel">
-  <div class="section-title">Add Camera</div>
-  <form id="add-form">
-    <div class="form-grid">
-      <div class="full">
-        <label>Name *</label>
-        <input name="name" required placeholder="SH2 Watchman Rd Roundabout">
+
+    <!-- Add / Edit form -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div id="form-title" class="section-title" style="margin:0">Add Camera</div>
+    </div>
+    <div id="edit-banner">
+      <span id="edit-banner-name"></span>
+      <button onclick="cancelEdit()">× Cancel edit</button>
+    </div>
+    <form id="add-form">
+      <div class="form-grid">
+        <div class="full">
+          <label>Name *</label>
+          <input name="name" required placeholder="SH2 Watchman Rd Roundabout">
+        </div>
+        <div class="full">
+          <label>Description</label>
+          <textarea name="description" placeholder="North along SH2 from Watchman Rd roundabout"></textarea>
+        </div>
+        <div>
+          <label>Category</label>
+          <select name="category">
+            <option value="traffic">traffic</option>
+            <option value="river">river</option>
+            <option value="surf">surf</option>
+            <option value="port">port</option>
+            <option value="airport">airport</option>
+            <option value="scenic">scenic</option>
+          </select>
+        </div>
+        <div>
+          <label>Capture policy</label>
+          <select name="capture_policy">
+            <option value="capture">capture (pull stills)</option>
+            <option value="embed_only">embed only (iframe / link)</option>
+          </select>
+        </div>
+        <div>
+          <label>Latitude</label>
+          <input name="lat" type="number" step="any" placeholder="-39.49" oninput="syncPickerFromInputs()">
+        </div>
+        <div>
+          <label>Longitude</label>
+          <input name="lon" type="number" step="any" placeholder="176.85" oninput="syncPickerFromInputs()">
+        </div>
+        <div class="full">
+          <label>Click map to set location</label>
+          <div id="picker-map"></div>
+        </div>
+        <div class="full">
+          <label>Snapshot URL</label>
+          <input name="snapshot_url" placeholder="https://www.trafficnz.info/camera/740.jpg">
+        </div>
+        <div class="full">
+          <label>Stream URL</label>
+          <input name="stream_url" placeholder="https://…">
+        </div>
+        <div class="full">
+          <label>Source page URL</label>
+          <input name="source_page" placeholder="https://www.journeys.nzta.govt.nz/traffic-cameras/hawkes-bay/1470">
+        </div>
+        <div>
+          <label>Keep last N stills (0 = all)</label>
+          <input name="keep_last_n" type="number" min="0" value="1">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button type="submit" id="form-submit-btn" class="btn btn-primary">Add camera</button>
+        </div>
       </div>
-      <div class="full">
-        <label>Description</label>
-        <textarea name="description" placeholder="North along SH2 from Watchman Rd roundabout"></textarea>
+    </form>
+
+    <hr>
+
+    <!-- Camera table -->
+    <div class="section-title">All Cameras</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Category</th>
+          <th>Policy</th>
+          <th>Keep N</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="cam-tbody"></tbody>
+    </table>
+
+    <hr>
+
+    <!-- Change password -->
+    <div class="section-title">Change Password</div>
+    <div style="max-width:360px;display:grid;gap:10px">
+      <div>
+        <label>Current password</label>
+        <input id="pw-current" type="password" autocomplete="current-password">
       </div>
       <div>
-        <label>Category</label>
-        <select name="category">
-          <option value="traffic">traffic</option>
-          <option value="river">river</option>
-          <option value="surf">surf</option>
-          <option value="port">port</option>
-          <option value="airport">airport</option>
-          <option value="scenic">scenic</option>
-        </select>
+        <label>New password</label>
+        <input id="pw-new" type="password" autocomplete="new-password">
       </div>
       <div>
-        <label>Capture policy</label>
-        <select name="capture_policy">
-          <option value="capture">capture (pull stills)</option>
-          <option value="embed_only">embed only (iframe / link)</option>
-        </select>
+        <label>Confirm new password</label>
+        <input id="pw-confirm" type="password" autocomplete="new-password">
       </div>
-      <div>
-        <label>Latitude</label>
-        <input name="lat" type="number" step="any" placeholder="-39.49" oninput="syncPickerFromInputs()">
-      </div>
-      <div>
-        <label>Longitude</label>
-        <input name="lon" type="number" step="any" placeholder="176.85" oninput="syncPickerFromInputs()">
-      </div>
-      <div class="full">
-        <label>Click map to set location</label>
-        <div id="picker-map"></div>
-      </div>
-      <div class="full">
-        <label>Snapshot URL</label>
-        <input name="snapshot_url" placeholder="https://www.trafficnz.info/camera/740.jpg">
-      </div>
-      <div class="full">
-        <label>Stream URL</label>
-        <input name="stream_url" placeholder="https://…">
-      </div>
-      <div class="full">
-        <label>Source page URL</label>
-        <input name="source_page" placeholder="https://www.journeys.nzta.govt.nz/traffic-cameras/hawkes-bay/1470">
-      </div>
-      <div>
-        <label>Keep last N stills (0 = all)</label>
-        <input name="keep_last_n" type="number" min="0" value="1">
-      </div>
-      <div style="display:flex;align-items:flex-end">
-        <button type="submit" class="btn btn-primary">Add camera</button>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" onclick="doChangePassword()">Change password</button>
+        <span id="pw-msg"></span>
       </div>
     </div>
-  </form>
-  <hr>
-  <div class="section-title">All Cameras</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Category</th>
-        <th>Policy</th>
-        <th>Keep N</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody id="cam-tbody"></tbody>
-  </table>
+
   </div><!-- /admin-panel -->
+</div>
+
+<!-- ── Lightbox ──────────────────────────────────────────────────── -->
+<div id="lightbox" onclick="closeLightbox()">
+  <button id="lightbox-close" onclick="closeLightbox()">×</button>
+  <img id="lightbox-img" src="" alt="" onclick="event.stopPropagation()">
+  <div id="lightbox-caption"></div>
 </div>
 
 <script>
@@ -247,10 +342,12 @@ const CAT_COLORS = {
 };
 
 let cameras = [];
+let adminCams = [];
 let map, markers = {};
 let selected = null;
-let lastTs = {};   // camera_id -> ts string
+let lastTs = {};
 let loggedIn = false;
+let editingId = null;
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -296,6 +393,32 @@ async function doLogout() {
   loggedIn = false;
   document.getElementById('logout-btn').style.display = 'none';
   refreshAdminView();
+}
+
+async function doChangePassword() {
+  const current = document.getElementById('pw-current').value;
+  const next    = document.getElementById('pw-new').value;
+  const confirm = document.getElementById('pw-confirm').value;
+  const msg = document.getElementById('pw-msg');
+  msg.className = '';
+  if (next !== confirm) { msg.className='msg-err'; msg.textContent='Passwords do not match.'; return; }
+  if (next.length < 4)  { msg.className='msg-err'; msg.textContent='Min 4 characters.'; return; }
+  const res = await fetch('/api/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  });
+  if (res.ok) {
+    msg.className = 'msg-ok';
+    msg.textContent = 'Password changed.';
+    document.getElementById('pw-current').value = '';
+    document.getElementById('pw-new').value = '';
+    document.getElementById('pw-confirm').value = '';
+  } else {
+    const data = await res.json();
+    msg.className = 'msg-err';
+    msg.textContent = data.detail || 'Error.';
+  }
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -351,8 +474,10 @@ function refreshDetailImg(cam) {
   const img = document.getElementById('detail-img');
   if (cam.capture_policy === 'capture') {
     img.src = `/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id] || 0}`;
+    img.style.cursor = 'pointer';
   } else {
     img.src = '';
+    img.style.cursor = 'default';
   }
 }
 
@@ -363,10 +488,11 @@ function renderGrid() {
   const cap = cameras.filter(c => c.capture_policy === 'capture');
   if (!cap.length) { el.innerHTML = '<p style="color:#64748b;font-size:13px">No capture cameras yet.</p>'; return; }
   el.innerHTML = cap.map(cam => `
-    <div class="card" data-id="${cam.id}" onclick="selectCamById(${cam.id})">
+    <div class="card" data-id="${cam.id}">
       <img src="/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id]||0}" loading="lazy"
-           onerror="this.style.opacity='0.2'">
-      <div class="card-name">${esc(cam.name)}</div>
+           onerror="this.style.opacity='0.15'"
+           onclick="openLightbox(${cam.id},'${esc(cam.name)}')">
+      <div class="card-name" onclick="selectCamById(${cam.id})">${esc(cam.name)}</div>
       <div class="card-ts" id="card-ts-${cam.id}">${fmtTs(lastTs[cam.id])}</div>
     </div>`).join('');
 }
@@ -375,6 +501,29 @@ function selectCamById(id) {
   const cam = cameras.find(c => c.id === id);
   if (cam) selectCam(cam);
 }
+
+// ── Lightbox ──────────────────────────────────────────────────────────────────
+
+function openLightbox(camId, camName) {
+  const ts = lastTs[camId] || Date.now();
+  document.getElementById('lightbox-img').src = `/stills/${camId}/latest.jpg?t=${ts}`;
+  document.getElementById('lightbox-caption').textContent = camName || '';
+  document.getElementById('lightbox').classList.add('show');
+}
+
+function openLightboxFromDetail() {
+  if (selected && selected.capture_policy === 'capture') {
+    openLightbox(selected.id, selected.name);
+  }
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('show');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeLightbox();
+});
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -393,7 +542,6 @@ function connectSSE() {
   es.addEventListener('still', e => {
     const { camera_id, ts } = JSON.parse(e.data);
     lastTs[camera_id] = ts;
-    // refresh grid card
     const card = document.querySelector(`.card[data-id="${camera_id}"]`);
     if (card) {
       const img = card.querySelector('img');
@@ -402,7 +550,6 @@ function connectSSE() {
       const tsEl = document.getElementById(`card-ts-${camera_id}`);
       if (tsEl) tsEl.textContent = fmtTs(ts);
     }
-    // refresh detail panel
     if (selected && selected.id === camera_id) refreshDetailImg(selected);
   });
   es.onerror = () => {
@@ -413,13 +560,13 @@ function connectSSE() {
   };
 }
 
-// ── Admin ─────────────────────────────────────────────────────────────────────
+// ── Admin table ───────────────────────────────────────────────────────────────
 
 async function loadAdminTable() {
   const res = await fetch('/api/cameras/all');
   if (res.status === 401) { loggedIn = false; refreshAdminView(); return; }
-  const all = await res.json();
-  document.getElementById('cam-tbody').innerHTML = all.map(cam => {
+  adminCams = await res.json();
+  document.getElementById('cam-tbody').innerHTML = adminCams.map(cam => {
     const badge = cam.active
       ? (cam.capture_policy === 'capture'
           ? '<span class="badge b-capture">capture</span>'
@@ -431,6 +578,7 @@ async function loadAdminTable() {
       <td>${badge}</td>
       <td>${cam.keep_last_n === 0 ? '∞' : cam.keep_last_n}</td>
       <td style="white-space:nowrap;display:flex;gap:6px">
+        <button class="btn-edit btn-sm" onclick="editCam(${cam.id})">Edit</button>
         <button class="btn-ghost btn-sm" onclick="toggleActive(${cam.id},${cam.active})">
           ${cam.active ? 'Disable' : 'Enable'}
         </button>
@@ -439,6 +587,97 @@ async function loadAdminTable() {
     </tr>`;
   }).join('');
 }
+
+// ── Edit ──────────────────────────────────────────────────────────────────────
+
+function editCam(id) {
+  const cam = adminCams.find(c => c.id === id);
+  if (!cam) return;
+  editingId = id;
+
+  document.getElementById('form-title').textContent = 'Edit Camera';
+  document.getElementById('edit-banner-name').textContent = cam.name;
+  document.getElementById('edit-banner').classList.add('show');
+  document.getElementById('form-submit-btn').textContent = 'Save changes';
+
+  const f = document.getElementById('add-form');
+  f.querySelector('[name=name]').value = cam.name || '';
+  f.querySelector('[name=description]').value = cam.description || '';
+  f.querySelector('[name=category]').value = cam.category || 'traffic';
+  f.querySelector('[name=capture_policy]').value = cam.capture_policy || 'capture';
+  f.querySelector('[name=snapshot_url]').value = cam.snapshot_url || '';
+  f.querySelector('[name=stream_url]').value = cam.stream_url || '';
+  f.querySelector('[name=source_page]').value = cam.source_page || '';
+  f.querySelector('[name=keep_last_n]').value = cam.keep_last_n ?? 1;
+  f.querySelector('[name=lat]').value = cam.lat ?? '';
+  f.querySelector('[name=lon]').value = cam.lon ?? '';
+
+  if (cam.lat && cam.lon && pickerMap) {
+    setPickerLocation(cam.lat, cam.lon);
+    pickerMap.easeTo({ center: [cam.lon, cam.lat], zoom: 12 });
+  }
+
+  f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelEdit() {
+  editingId = null;
+  document.getElementById('form-title').textContent = 'Add Camera';
+  document.getElementById('edit-banner').classList.remove('show');
+  document.getElementById('form-submit-btn').textContent = 'Add camera';
+  document.getElementById('add-form').reset();
+  document.getElementById('add-form').querySelector('[name=keep_last_n]').value = '1';
+  resetPicker();
+}
+
+// ── Form submit ───────────────────────────────────────────────────────────────
+
+document.getElementById('add-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {};
+
+  if (editingId) {
+    // include all fields; empty → null (allows clearing optional fields)
+    for (const [k, v] of new FormData(e.target).entries()) {
+      if (['lat','lon'].includes(k))      body[k] = v === '' ? null : Number(v);
+      else if (k === 'keep_last_n')       body[k] = v === '' ? 1 : Number(v);
+      else                                body[k] = v === '' ? null : v;
+    }
+  } else {
+    // new camera: skip empty strings to keep DB defaults
+    for (const [k, v] of new FormData(e.target).entries()) {
+      if (v === '') continue;
+      body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
+    }
+  }
+
+  const url    = editingId ? `/api/cameras/${editingId}` : '/api/cameras';
+  const method = editingId ? 'PATCH' : 'POST';
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (res.ok) {
+    const cam = await res.json();
+    if (editingId) {
+      cameras = cameras.map(c => c.id === editingId ? cam : c);
+      if (markers[cam.id]) { markers[cam.id].remove(); delete markers[cam.id]; }
+      putMarker(cam);
+      renderGrid();
+      cancelEdit();
+    } else {
+      cameras.push(cam);
+      putMarker(cam);
+      renderGrid();
+      e.target.reset();
+      e.target.querySelector('[name=keep_last_n]').value = '1';
+      resetPicker();
+    }
+    loadAdminTable();
+  }
+});
 
 async function toggleActive(id, current) {
   await fetch(`/api/cameras/${id}`, {
@@ -456,32 +695,9 @@ async function delCam(id, name) {
   cameras = cameras.filter(c => c.id !== id);
   if (markers[id]) { markers[id].remove(); delete markers[id]; }
   renderGrid();
+  if (editingId === id) cancelEdit();
   loadAdminTable();
 }
-
-document.getElementById('add-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const body = {};
-  for (const [k, v] of new FormData(e.target).entries()) {
-    if (v === '') continue;
-    body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
-  }
-  const res = await fetch('/api/cameras', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) {
-    const cam = await res.json();
-    cameras.push(cam);
-    putMarker(cam);
-    renderGrid();
-    e.target.reset();
-    e.target.querySelector('[name=keep_last_n]').value = '1';
-    resetPicker();
-    loadAdminTable();
-  }
-});
 
 // ── Location picker ───────────────────────────────────────────────────────────
 

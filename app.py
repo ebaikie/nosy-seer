@@ -53,6 +53,12 @@ def _init():
                 active         INTEGER DEFAULT 1
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
         c.commit()
     _seed()
 
@@ -82,6 +88,24 @@ def _seed():
                      int(cam.get("active", True))),
                 )
         c.commit()
+
+
+def _get_setting(key: str) -> str | None:
+    with _conn() as c:
+        row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+
+def _set_setting(key: str, value: str):
+    with _conn() as c:
+        c.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)", (key, value))
+        c.commit()
+
+
+def _check_creds(username: str, password: str) -> bool:
+    stored_user = _get_setting("admin_username") or ADMIN_USERNAME
+    stored_pass = _get_setting("admin_password") or ADMIN_PASSWORD
+    return username == stored_user and password == stored_pass
 
 
 def _row(r: sqlite3.Row) -> dict:
@@ -187,11 +211,27 @@ def me(request: Request):
 
 @app.post("/api/login")
 def login(body: LoginBody, request: Request):
-    if body.username == ADMIN_USERNAME and body.password == ADMIN_PASSWORD:
+    if _check_creds(body.username, body.password):
         request.session["logged_in"] = True
         request.session["username"] = body.username
         return {"ok": True}
     raise HTTPException(401, "invalid credentials")
+
+
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/change-password")
+def change_password(body: ChangePasswordBody, request: Request, _: None = Depends(require_auth)):
+    username = request.session.get("username", "")
+    if not _check_creds(username, body.current_password):
+        raise HTTPException(400, "current password incorrect")
+    if len(body.new_password) < 4:
+        raise HTTPException(400, "password must be at least 4 characters")
+    _set_setting("admin_password", body.new_password)
+    return {"ok": True}
 
 
 @app.post("/api/logout")
