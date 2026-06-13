@@ -98,6 +98,11 @@
     #login-error { color: #f87171; font-size: 13px; margin-top: 10px; display: none; }
     #admin-panel { display: none; }
     #admin-panel.show { display: block; }
+    #picker-map {
+      height: 260px; border-radius: 8px; overflow: hidden;
+      border: 1px solid #334155; margin-top: 4px; cursor: crosshair;
+    }
+    #picker-map .maplibregl-canvas { cursor: crosshair; }
 
     #logout-btn {
       display: none; background: none; border: 1px solid #334155;
@@ -187,11 +192,15 @@
       </div>
       <div>
         <label>Latitude</label>
-        <input name="lat" type="number" step="any" placeholder="-39.49">
+        <input name="lat" type="number" step="any" placeholder="-39.49" oninput="syncPickerFromInputs()">
       </div>
       <div>
         <label>Longitude</label>
-        <input name="lon" type="number" step="any" placeholder="176.85">
+        <input name="lon" type="number" step="any" placeholder="176.85" oninput="syncPickerFromInputs()">
+      </div>
+      <div class="full">
+        <label>Click map to set location</label>
+        <div id="picker-map"></div>
       </div>
       <div class="full">
         <label>Snapshot URL</label>
@@ -256,7 +265,10 @@ function refreshAdminView() {
   document.getElementById('admin-login').style.display = loggedIn ? 'none' : '';
   const panel = document.getElementById('admin-panel');
   panel.classList.toggle('show', loggedIn);
-  if (loggedIn) loadAdminTable();
+  if (loggedIn) {
+    loadAdminTable();
+    if (!pickerInited) requestAnimationFrame(() => requestAnimationFrame(initPickerMap));
+  }
 }
 
 async function doLogin() {
@@ -466,9 +478,57 @@ document.getElementById('add-form').addEventListener('submit', async e => {
     renderGrid();
     e.target.reset();
     e.target.querySelector('[name=keep_last_n]').value = '1';
+    resetPicker();
     loadAdminTable();
   }
 });
+
+// ── Location picker ───────────────────────────────────────────────────────────
+
+let pickerMap = null;
+let pickerMarker = null;
+let pickerInited = false;
+
+function initPickerMap() {
+  if (pickerInited) return;
+  pickerInited = true;
+  pickerMap = new maplibregl.Map({
+    container: 'picker-map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [176.85, -39.49],
+    zoom: 8,
+  });
+  pickerMap.on('click', e => setPickerLocation(e.lngLat.lat, e.lngLat.lng, true));
+}
+
+function setPickerLocation(lat, lng, fromClick = false) {
+  document.querySelector('#add-form [name=lat]').value = lat.toFixed(6);
+  document.querySelector('#add-form [name=lon]').value = lng.toFixed(6);
+  if (!pickerMarker) {
+    pickerMarker = new maplibregl.Marker({ draggable: true, color: '#38bdf8' })
+      .setLngLat([lng, lat]).addTo(pickerMap);
+    pickerMarker.on('dragend', () => {
+      const p = pickerMarker.getLngLat();
+      setPickerLocation(p.lat, p.lng);
+    });
+  } else {
+    pickerMarker.setLngLat([lng, lat]);
+  }
+  if (fromClick) pickerMap.easeTo({ center: [lng, lat] });
+}
+
+function syncPickerFromInputs() {
+  if (!pickerMap) return;
+  const lat = parseFloat(document.querySelector('#add-form [name=lat]').value);
+  const lng = parseFloat(document.querySelector('#add-form [name=lon]').value);
+  if (!isNaN(lat) && !isNaN(lng)) setPickerLocation(lat, lng);
+}
+
+function resetPicker() {
+  if (pickerMarker) { pickerMarker.remove(); pickerMarker = null; }
+  document.querySelector('#add-form [name=lat]').value = '';
+  document.querySelector('#add-form [name=lon]').value = '';
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
