@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5075:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DB_PATH: /app/data/nosy_seer.db
+      STILLS_DIR: /app/data/stills
+      CAPTURE_INTERVAL_S: "60"
+    restart: unless-stopped

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nosy-seer</title>
+  <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+    header {
+      padding: 10px 20px; border-bottom: 1px solid #1e293b;
+      display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 20px; font-weight: 700; color: #f8fafc; letter-spacing: -0.5px; }
+    header h1 span { color: #38bdf8; }
+    nav button {
+      background: none; border: none; color: #94a3b8;
+      padding: 6px 14px; border-radius: 6px; cursor: pointer;
+      font-size: 14px; font-weight: 500;
+    }
+    nav button.active { background: #1e293b; color: #f8fafc; }
+    #status { margin-left: auto; font-size: 12px; color: #64748b; }
+
+    .tab { padding: 20px; display: none; }
+    .tab.active { display: block; }
+
+    /* ── View tab ─────────────────────────────────────────────── */
+    #map { height: 44vh; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; }
+
+    #detail {
+      margin-top: 16px; background: #1e293b; border-radius: 10px;
+      padding: 16px; display: none; gap: 16px; align-items: flex-start;
+    }
+    #detail.show { display: flex; }
+    #detail-img {
+      width: 260px; min-height: 160px; object-fit: cover;
+      border-radius: 8px; background: #0f172a; flex-shrink: 0;
+    }
+    #detail .info h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+    #detail .info .meta { font-size: 12px; color: #64748b; margin-bottom: 6px; }
+    #detail .info .desc { font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    #detail .info a { color: #38bdf8; font-size: 12px; margin-top: 10px; display: inline-block; }
+
+    #grid { margin-top: 24px; }
+    #grid h3 { font-size: 12px; color: #64748b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
+    #grid-items {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: #1e293b; border-radius: 8px; overflow: hidden;
+      cursor: pointer; border: 1px solid #334155; transition: border-color 0.15s;
+    }
+    .card:hover { border-color: #38bdf8; }
+    .card img { width: 100%; height: 130px; object-fit: cover; display: block; background: #0f172a; }
+    .card .card-name { padding: 7px 10px 2px; font-size: 12px; font-weight: 500; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card .card-ts  { padding: 0 10px 8px; font-size: 11px; color: #64748b; }
+
+    /* ── Admin tab ────────────────────────────────────────────── */
+    #admin { max-width: 800px; }
+    .section-title { font-size: 15px; font-weight: 600; color: #f8fafc; margin-bottom: 14px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+    input, select, textarea {
+      width: 100%; background: #1e293b; border: 1px solid #334155;
+      color: #e2e8f0; border-radius: 6px; padding: 8px 10px;
+      font-size: 13px; font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #38bdf8; }
+    textarea { resize: vertical; height: 56px; }
+    .btn { padding: 8px 18px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-primary { background: #0ea5e9; color: #fff; }
+    .btn-primary:hover { background: #38bdf8; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 5px; }
+    .btn-ghost { background: #334155; color: #e2e8f0; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
+    .btn-danger { background: #7f1d1d; color: #fca5a5; border: none; cursor: pointer; font-size: 12px; padding: 4px 10px; border-radius: 5px; }
+    hr { border: none; border-top: 1px solid #1e293b; margin: 24px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px; color: #64748b; border-bottom: 1px solid #1e293b; font-weight: 500; }
+    td { padding: 8px; border-bottom: 1px solid #1e293b22; vertical-align: middle; }
+    tr:hover td { background: #ffffff08; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .b-capture  { background: #064e3b; color: #34d399; }
+    .b-embed    { background: #1e3a5f; color: #60a5fa; }
+    .b-inactive { background: #1f2937; color: #6b7280; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>nosy<span>-seer</span></h1>
+  <nav>
+    <button class="active" onclick="showTab('view')">View</button>
+    <button onclick="showTab('admin')">Admin</button>
+  </nav>
+  <span id="status">● connecting…</span>
+</header>
+
+<div id="view" class="tab active">
+  <div id="map"></div>
+  <div id="detail">
+    <img id="detail-img" src="" alt="">
+    <div class="info">
+      <h2 id="detail-name"></h2>
+      <div class="meta" id="detail-meta"></div>
+      <div class="desc" id="detail-desc"></div>
+      <a id="detail-link" href="#" target="_blank" rel="noopener">Source page ↗</a>
+    </div>
+  </div>
+  <div id="grid">
+    <h3>Latest captures</h3>
+    <div id="grid-items"></div>
+  </div>
+</div>
+
+<div id="admin" class="tab">
+  <div class="section-title">Add Camera</div>
+  <form id="add-form">
+    <div class="form-grid">
+      <div class="full">
+        <label>Name *</label>
+        <input name="name" required placeholder="SH2 Watchman Rd Roundabout">
+      </div>
+      <div class="full">
+        <label>Description</label>
+        <textarea name="description" placeholder="North along SH2 from Watchman Rd roundabout"></textarea>
+      </div>
+      <div>
+        <label>Category</label>
+        <select name="category">
+          <option value="traffic">traffic</option>
+          <option value="river">river</option>
+          <option value="surf">surf</option>
+          <option value="port">port</option>
+          <option value="airport">airport</option>
+          <option value="scenic">scenic</option>
+        </select>
+      </div>
+      <div>
+        <label>Capture policy</label>
+        <select name="capture_policy">
+          <option value="capture">capture (pull stills)</option>
+          <option value="embed_only">embed only (iframe / link)</option>
+        </select>
+      </div>
+      <div>
+        <label>Latitude</label>
+        <input name="lat" type="number" step="any" placeholder="-39.49">
+      </div>
+      <div>
+        <label>Longitude</label>
+        <input name="lon" type="number" step="any" placeholder="176.85">
+      </div>
+      <div class="full">
+        <label>Snapshot URL</label>
+        <input name="snapshot_url" placeholder="https://www.trafficnz.info/camera/740.jpg">
+      </div>
+      <div class="full">
+        <label>Stream URL</label>
+        <input name="stream_url" placeholder="https://…">
+      </div>
+      <div class="full">
+        <label>Source page URL</label>
+        <input name="source_page" placeholder="https://www.journeys.nzta.govt.nz/traffic-cameras/hawkes-bay/1470">
+      </div>
+      <div>
+        <label>Keep last N stills (0 = all)</label>
+        <input name="keep_last_n" type="number" min="0" value="1">
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button type="submit" class="btn btn-primary">Add camera</button>
+      </div>
+    </div>
+  </form>
+  <hr>
+  <div class="section-title">All Cameras</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Category</th>
+        <th>Policy</th>
+        <th>Keep N</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="cam-tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const CAT_COLORS = {
+  traffic:'#f59e0b', river:'#06b6d4', surf:'#8b5cf6',
+  port:'#ec4899',    airport:'#10b981', scenic:'#64748b'
+};
+
+let cameras = [];
+let map, markers = {};
+let selected = null;
+let lastTs = {};   // camera_id -> ts string
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+
+function showTab(t) {
+  document.querySelectorAll('nav button').forEach(b =>
+    b.classList.toggle('active', b.textContent.toLowerCase() === t)
+  );
+  document.querySelectorAll('.tab').forEach(d =>
+    d.classList.toggle('active', d.id === t)
+  );
+  if (t === 'admin') loadAdminTable();
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+
+function initMap() {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [176.85, -39.49],
+    zoom: 8,
+  });
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
+}
+
+function putMarker(cam) {
+  if (!cam.lat || !cam.lon) return;
+  if (markers[cam.id]) markers[cam.id].remove();
+  const el = document.createElement('div');
+  el.style.cssText = `width:14px;height:14px;border-radius:50%;border:2px solid #0f172a;cursor:pointer;background:${CAT_COLORS[cam.category]||'#94a3b8'}`;
+  el.title = cam.name;
+  const m = new maplibregl.Marker(el).setLngLat([cam.lon, cam.lat]).addTo(map);
+  el.addEventListener('click', () => selectCam(cam));
+  markers[cam.id] = m;
+}
+
+function selectCam(cam) {
+  selected = cam;
+  const d = document.getElementById('detail');
+  d.classList.add('show');
+  document.getElementById('detail-name').textContent = cam.name;
+  document.getElementById('detail-meta').textContent =
+    [cam.category, cam.capture_policy, cam.active ? '' : '(inactive)'].filter(Boolean).join(' · ');
+  document.getElementById('detail-desc').textContent = cam.description || '';
+  const lnk = document.getElementById('detail-link');
+  lnk.href = cam.source_page || '#';
+  lnk.style.display = cam.source_page ? '' : 'none';
+  refreshDetailImg(cam);
+}
+
+function refreshDetailImg(cam) {
+  const img = document.getElementById('detail-img');
+  if (cam.capture_policy === 'capture') {
+    img.src = `/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id] || 0}`;
+  } else {
+    img.src = '';
+  }
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────────
+
+function renderGrid() {
+  const el = document.getElementById('grid-items');
+  const cap = cameras.filter(c => c.capture_policy === 'capture');
+  if (!cap.length) { el.innerHTML = '<p style="color:#64748b;font-size:13px">No capture cameras yet.</p>'; return; }
+  el.innerHTML = cap.map(cam => `
+    <div class="card" data-id="${cam.id}" onclick="selectCamById(${cam.id})">
+      <img src="/stills/${cam.id}/latest.jpg?t=${lastTs[cam.id]||0}" loading="lazy"
+           onerror="this.style.opacity='0.2'">
+      <div class="card-name">${esc(cam.name)}</div>
+      <div class="card-ts" id="card-ts-${cam.id}">${fmtTs(lastTs[cam.id])}</div>
+    </div>`).join('');
+}
+
+function selectCamById(id) {
+  const cam = cameras.find(c => c.id === id);
+  if (cam) selectCam(cam);
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+async function loadCameras() {
+  cameras = await fetch('/api/cameras').then(r => r.json());
+  cameras.forEach(putMarker);
+  renderGrid();
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+
+function connectSSE() {
+  const es = new EventSource('/api/events/stills');
+  const dot = document.getElementById('status');
+  es.onopen = () => { dot.textContent = '● live'; dot.style.color = '#34d399'; };
+  es.addEventListener('still', e => {
+    const { camera_id, ts } = JSON.parse(e.data);
+    lastTs[camera_id] = ts;
+    // refresh grid card
+    const card = document.querySelector(`.card[data-id="${camera_id}"]`);
+    if (card) {
+      const img = card.querySelector('img');
+      img.style.opacity = '1';
+      img.src = `/stills/${camera_id}/latest.jpg?t=${ts}`;
+      const tsEl = document.getElementById(`card-ts-${camera_id}`);
+      if (tsEl) tsEl.textContent = fmtTs(ts);
+    }
+    // refresh detail panel
+    if (selected && selected.id === camera_id) refreshDetailImg(selected);
+  });
+  es.onerror = () => {
+    dot.textContent = '● reconnecting…';
+    dot.style.color = '#f59e0b';
+    es.close();
+    setTimeout(connectSSE, 5000);
+  };
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+async function loadAdminTable() {
+  const all = await fetch('/api/cameras/all').then(r => r.json());
+  document.getElementById('cam-tbody').innerHTML = all.map(cam => {
+    const badge = cam.active
+      ? (cam.capture_policy === 'capture'
+          ? '<span class="badge b-capture">capture</span>'
+          : '<span class="badge b-embed">embed</span>')
+      : '<span class="badge b-inactive">inactive</span>';
+    return `<tr>
+      <td>${esc(cam.name)}</td>
+      <td>${cam.category}</td>
+      <td>${badge}</td>
+      <td>${cam.keep_last_n === 0 ? '∞' : cam.keep_last_n}</td>
+      <td style="white-space:nowrap;display:flex;gap:6px">
+        <button class="btn-ghost btn-sm" onclick="toggleActive(${cam.id},${cam.active})">
+          ${cam.active ? 'Disable' : 'Enable'}
+        </button>
+        <button class="btn-danger btn-sm" onclick="delCam(${cam.id},'${esc(cam.name)}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function toggleActive(id, current) {
+  await fetch(`/api/cameras/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: !current }),
+  });
+  await loadCameras();
+  loadAdminTable();
+}
+
+async function delCam(id, name) {
+  if (!confirm(`Delete "${name}"?`)) return;
+  await fetch(`/api/cameras/${id}`, { method: 'DELETE' });
+  cameras = cameras.filter(c => c.id !== id);
+  if (markers[id]) { markers[id].remove(); delete markers[id]; }
+  renderGrid();
+  loadAdminTable();
+}
+
+document.getElementById('add-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {};
+  for (const [k, v] of new FormData(e.target).entries()) {
+    if (v === '') continue;
+    body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
+  }
+  const res = await fetch('/api/cameras', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    const cam = await res.json();
+    cameras.push(cam);
+    putMarker(cam);
+    renderGrid();
+    e.target.reset();
+    e.target.querySelector('[name=keep_last_n]').value = '1';
+    loadAdminTable();
+  }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return ts;
+  return `${m[4]}:${m[5]}:${m[6]} UTC`;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+initMap();
+loadCameras();
+connectSSE();
+</script>
+</body>
+</html>
