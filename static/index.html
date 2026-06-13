@@ -99,7 +99,7 @@
     #grid h3 { font-size: 12px; color: #64748b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
     #grid-items {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 12px;
     }
     .card {
@@ -204,6 +204,36 @@
     #logout-btn:hover { border-color: #64748b; color: #e2e8f0; }
     .msg-ok  { color: #34d399; font-size: 13px; margin-top: 8px; }
     .msg-err { color: #f87171; font-size: 13px; margin-top: 8px; }
+    .table-wrap { overflow-x: auto; }
+
+    /* ── Mobile ──────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      header { padding: 8px 12px; gap: 8px; }
+      header h1 { font-size: 16px; }
+      nav button { padding: 5px 10px; font-size: 13px; }
+      #status { display: none; }
+
+      .tab { padding: 12px; }
+
+      #map { height: 38vh; border-radius: 6px; }
+
+      #detail { padding: 12px; gap: 12px; }
+      #detail-img   { width: 100%; min-height: unset; }
+      #detail-video { width: 100%; height: auto; aspect-ratio: 16/9; }
+      #detail-embed { width: 100%; height: 220px; }
+      #detail .info { min-width: 0; width: 100%; }
+
+      .tl-bar { gap: 6px; }
+      .tl-controls { gap: 4px; }
+      #tl-fps { width: 70px; }
+
+      .card img { height: 100px; }
+      .card .card-name { font-size: 11px; }
+
+      #admin { max-width: 100%; }
+      .form-grid { grid-template-columns: 1fr; }
+      #picker-map { height: 220px; }
+    }
   </style>
 </head>
 <body>
@@ -357,12 +387,14 @@
 
     <hr>
     <div class="section-title">All Cameras</div>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr><th>Name</th><th>Category</th><th>Policy</th><th>Keep N</th><th>Interval</th><th></th></tr>
       </thead>
       <tbody id="cam-tbody"></tbody>
     </table>
+    </div>
 
     <hr>
     <div class="section-title">Change Password</div>
