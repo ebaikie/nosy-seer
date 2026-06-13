@@ -345,6 +345,10 @@
           <label>Keep last N stills (0 = all)</label>
           <input name="keep_last_n" type="number" min="0" value="1">
         </div>
+        <div>
+          <label>Capture interval (seconds, blank = global 60s)</label>
+          <input name="capture_interval_s" type="number" min="60" step="60" placeholder="e.g. 1800">
+        </div>
         <div style="display:flex;align-items:flex-end">
           <button type="submit" id="form-submit-btn" class="btn btn-primary">Add camera</button>
         </div>
@@ -355,7 +359,7 @@
     <div class="section-title">All Cameras</div>
     <table>
       <thead>
-        <tr><th>Name</th><th>Category</th><th>Policy</th><th>Keep N</th><th></th></tr>
+        <tr><th>Name</th><th>Category</th><th>Policy</th><th>Keep N</th><th>Interval</th><th></th></tr>
       </thead>
       <tbody id="cam-tbody"></tbody>
     </table>
@@ -742,9 +746,12 @@ async function loadAdminTable() {
           ? '<span class="badge b-capture">capture</span>'
           : '<span class="badge b-embed">embed</span>')
       : '<span class="badge b-inactive">inactive</span>';
+    const ivl = cam.capture_interval_s ? (cam.capture_interval_s % 3600 === 0
+      ? `${cam.capture_interval_s/3600}h` : `${cam.capture_interval_s/60}m`) : '—';
     return `<tr>
       <td>${esc(cam.name)}</td><td>${cam.category}</td><td>${badge}</td>
       <td>${cam.keep_last_n === 0 ? '∞' : cam.keep_last_n}</td>
+      <td>${ivl}</td>
       <td style="white-space:nowrap;display:flex;gap:6px">
         <button class="btn-edit btn-sm" onclick="editCam(${cam.id})">Edit</button>
         <button class="btn-ghost btn-sm" onclick="toggleActive(${cam.id},${cam.active})">
@@ -771,6 +778,7 @@ function editCam(id) {
   f.querySelector('[name=stream_url]').value = cam.stream_url || '';
   f.querySelector('[name=source_page]').value = cam.source_page || '';
   f.querySelector('[name=keep_last_n]').value = cam.keep_last_n ?? 1;
+  f.querySelector('[name=capture_interval_s]').value = cam.capture_interval_s ?? '';
   f.querySelector('[name=lat]').value = cam.lat ?? '';
   f.querySelector('[name=lon]').value = cam.lon ?? '';
   if (cam.lat && cam.lon && pickerMap) {
@@ -787,6 +795,7 @@ function cancelEdit() {
   document.getElementById('form-submit-btn').textContent = 'Add camera';
   document.getElementById('add-form').reset();
   document.getElementById('add-form').querySelector('[name=keep_last_n]').value = '1';
+  document.getElementById('add-form').querySelector('[name=capture_interval_s]').value = '';
   resetPicker();
 }
 
@@ -795,14 +804,14 @@ document.getElementById('add-form').addEventListener('submit', async e => {
   const body = {};
   if (editingId) {
     for (const [k, v] of new FormData(e.target).entries()) {
-      if (['lat','lon'].includes(k))  body[k] = v === '' ? null : Number(v);
-      else if (k === 'keep_last_n')   body[k] = v === '' ? 1 : Number(v);
-      else                            body[k] = v === '' ? null : v;
+      if (['lat','lon','capture_interval_s'].includes(k))  body[k] = v === '' ? null : Number(v);
+      else if (k === 'keep_last_n')                        body[k] = v === '' ? 1 : Number(v);
+      else                                                 body[k] = v === '' ? null : v;
     }
   } else {
     for (const [k, v] of new FormData(e.target).entries()) {
       if (v === '') continue;
-      body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
+      body[k] = ['lat','lon','keep_last_n','capture_interval_s'].includes(k) ? Number(v) : v;
     }
   }
   const url = editingId ? `/api/cameras/${editingId}` : '/api/cameras';
@@ -818,6 +827,7 @@ document.getElementById('add-form').addEventListener('submit', async e => {
       cameras.push(cam); putMarker(cam); renderGrid();
       e.target.reset();
       e.target.querySelector('[name=keep_last_n]').value = '1';
+      e.target.querySelector('[name=capture_interval_s]').value = '';
       resetPicker();
     }
     loadAdminTable();

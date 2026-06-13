@@ -24,6 +24,7 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "nosy123")
 
 _subs: list[asyncio.Queue] = []
+_last_captured: dict[int, float] = {}
 
 
 # ── DB ────────────────────────────────────────────────────────────────────────
@@ -49,10 +50,16 @@ def _init():
                 snapshot_url   TEXT,
                 stream_url     TEXT,
                 capture_policy TEXT    DEFAULT 'capture',
-                keep_last_n    INTEGER DEFAULT 1,
-                active         INTEGER DEFAULT 1
+                keep_last_n         INTEGER DEFAULT 1,
+                capture_interval_s  INTEGER,
+                active              INTEGER DEFAULT 1
             )
         """)
+        try:
+            c.execute("ALTER TABLE cameras ADD COLUMN capture_interval_s INTEGER")
+            c.commit()
+        except sqlite3.OperationalError:
+            pass
         c.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
@@ -76,8 +83,9 @@ def _seed():
                 c.execute(
                     """INSERT INTO cameras
                        (name,description,category,lat,lon,source_page,
-                        snapshot_url,stream_url,capture_policy,keep_last_n,active)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        snapshot_url,stream_url,capture_policy,keep_last_n,
+                        capture_interval_s,active)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (cam.get("name"), cam.get("description"),
                      cam.get("category", "traffic"),
                      cam.get("lat"), cam.get("lon"),
@@ -85,6 +93,7 @@ def _seed():
                      cam.get("stream_url"),
                      cam.get("capture_policy", "capture"),
                      cam.get("keep_last_n", 1),
+                     cam.get("capture_interval_s"),
                      int(cam.get("active", True))),
                 )
         c.commit()
@@ -140,19 +149,24 @@ async def capture_loop():
     await asyncio.sleep(3)
     while True:
         t0 = dt.datetime.utcnow()
+        now = t0.timestamp()
         with _conn() as c:
             cams = [_row(r) for r in c.execute(
                 "SELECT * FROM cameras "
                 "WHERE active=1 AND capture_policy='capture' AND snapshot_url IS NOT NULL"
             )]
-        if cams:
+        due = [cam for cam in cams
+               if now - _last_captured.get(cam["id"], 0)
+               >= (cam["capture_interval_s"] or CAPTURE_INTERVAL_S)]
+        if due:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                for i, cam in enumerate(cams):
+                for i, cam in enumerate(due):
                     if i > 0:
                         await asyncio.sleep(0.5)
                     blob = await _fetch(client, cam["snapshot_url"])
                     if not blob:
                         continue
+                    _last_captured[cam["id"]] = now
                     ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
                     cam_dir = STILLS_DIR / str(cam["id"])
                     cam_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +267,7 @@ class CameraIn(BaseModel):
     stream_url: Optional[str] = None
     capture_policy: str = "capture"
     keep_last_n: int = 1
+    capture_interval_s: Optional[int] = None
     active: bool = True
 
 
@@ -267,6 +282,7 @@ class CameraUpdate(BaseModel):
     stream_url: Optional[str] = None
     capture_policy: Optional[str] = None
     keep_last_n: Optional[int] = None
+    capture_interval_s: Optional[int] = None
     active: Optional[bool] = None
 
 
@@ -292,11 +308,13 @@ def add_camera(body: CameraIn, _: None = Depends(require_auth)):
         cur = c.execute(
             """INSERT INTO cameras
                (name,description,category,lat,lon,source_page,
-                snapshot_url,stream_url,capture_policy,keep_last_n,active)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                snapshot_url,stream_url,capture_policy,keep_last_n,
+                capture_interval_s,active)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (body.name, body.description, body.category, body.lat, body.lon,
              body.source_page, body.snapshot_url, body.stream_url,
-             body.capture_policy, body.keep_last_n, int(body.active)),
+             body.capture_policy, body.keep_last_n,
+             body.capture_interval_s, int(body.active)),
         )
         c.commit()
         return _row(c.execute("SELECT * FROM cameras WHERE id=?", (cur.lastrowid,)).fetchone())
