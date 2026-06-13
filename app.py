@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 DB_PATH = Path(os.getenv("DB_PATH", "nosy_seer.db"))
 STILLS_DIR = Path(os.getenv("STILLS_DIR", "stills"))
+SEED_FILE = Path(os.getenv("SEED_FILE", "seed.json"))
 CAPTURE_INTERVAL_S = int(os.getenv("CAPTURE_INTERVAL_S", "60"))
 
 _subs: list[asyncio.Queue] = []
@@ -47,6 +48,34 @@ def _init():
                 active         INTEGER DEFAULT 1
             )
         """)
+        c.commit()
+    _seed()
+
+
+def _seed():
+    if not SEED_FILE.exists():
+        return
+    entries = json.loads(SEED_FILE.read_text())
+    with _conn() as c:
+        for cam in entries:
+            if not cam.get("name"):
+                continue
+            exists = c.execute("SELECT 1 FROM cameras WHERE name=?", (cam["name"],)).fetchone()
+            if not exists:
+                c.execute(
+                    """INSERT INTO cameras
+                       (name,description,category,lat,lon,source_page,
+                        snapshot_url,stream_url,capture_policy,keep_last_n,active)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (cam.get("name"), cam.get("description"),
+                     cam.get("category", "traffic"),
+                     cam.get("lat"), cam.get("lon"),
+                     cam.get("source_page"), cam.get("snapshot_url"),
+                     cam.get("stream_url"),
+                     cam.get("capture_policy", "capture"),
+                     cam.get("keep_last_n", 1),
+                     int(cam.get("active", True))),
+                )
         c.commit()
 
 

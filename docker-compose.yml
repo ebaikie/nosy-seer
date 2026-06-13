@@ -8,5 +8,6 @@ services:
     environment:
       DB_PATH: /app/data/nosy_seer.db
       STILLS_DIR: /app/data/stills
+      SEED_FILE: /app/data/seed.json
       CAPTURE_INTERVAL_S: "60"
     restart: unless-stopped

@@ -1,0 +1,13 @@
+[
+  {
+    "name": "SH2 Watchman Rd Roundabout",
+    "description": "North along SH2 from Watchman Rd roundabout",
+    "category": "traffic",
+    "lat": -39.492,
+    "lon": 176.871,
+    "source_page": "https://www.journeys.nzta.govt.nz/traffic-cameras/hawkes-bay/1470",
+    "snapshot_url": "https://www.trafficnz.info/camera/740.jpg",
+    "capture_policy": "capture",
+    "keep_last_n": 1
+  }
+]
