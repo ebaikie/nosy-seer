@@ -88,6 +88,23 @@
     .b-capture  { background: #064e3b; color: #34d399; }
     .b-embed    { background: #1e3a5f; color: #60a5fa; }
     .b-inactive { background: #1f2937; color: #6b7280; }
+
+    /* ── Login form ───────────────────────────────────────────── */
+    #admin-login {
+      max-width: 360px; margin: 40px auto; background: #1e293b;
+      border-radius: 12px; padding: 32px; border: 1px solid #334155;
+    }
+    #admin-login h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; color: #f8fafc; }
+    #login-error { color: #f87171; font-size: 13px; margin-top: 10px; display: none; }
+    #admin-panel { display: none; }
+    #admin-panel.show { display: block; }
+
+    #logout-btn {
+      display: none; background: none; border: 1px solid #334155;
+      color: #94a3b8; padding: 4px 12px; border-radius: 6px;
+      cursor: pointer; font-size: 13px;
+    }
+    #logout-btn:hover { border-color: #64748b; color: #e2e8f0; }
   </style>
 </head>
 <body>
@@ -98,6 +115,7 @@
     <button class="active" onclick="showTab('view')">View</button>
     <button onclick="showTab('admin')">Admin</button>
   </nav>
+  <button id="logout-btn" onclick="doLogout()">Logout</button>
   <span id="status">● connecting…</span>
 </header>
 
@@ -119,6 +137,25 @@
 </div>
 
 <div id="admin" class="tab">
+
+  <div id="admin-login">
+    <h2>Admin login</h2>
+    <div>
+      <label>Username</label>
+      <input id="login-user" type="text" autocomplete="username" placeholder="admin">
+    </div>
+    <div style="margin-top:12px">
+      <label>Password</label>
+      <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div style="margin-top:16px">
+      <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
+    </div>
+    <div id="login-error">Invalid username or password.</div>
+  </div>
+
+  <div id="admin-panel">
   <div class="section-title">Add Camera</div>
   <form id="add-form">
     <div class="form-grid">
@@ -191,6 +228,7 @@
     </thead>
     <tbody id="cam-tbody"></tbody>
   </table>
+  </div><!-- /admin-panel -->
 </div>
 
 <script>
@@ -203,6 +241,50 @@ let cameras = [];
 let map, markers = {};
 let selected = null;
 let lastTs = {};   // camera_id -> ts string
+let loggedIn = false;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+async function checkAuth() {
+  const { logged_in } = await fetch('/api/me').then(r => r.json());
+  loggedIn = logged_in;
+  document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+  refreshAdminView();
+}
+
+function refreshAdminView() {
+  document.getElementById('admin-login').style.display = loggedIn ? 'none' : '';
+  const panel = document.getElementById('admin-panel');
+  panel.classList.toggle('show', loggedIn);
+  if (loggedIn) loadAdminTable();
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-user').value.trim();
+  const password = document.getElementById('login-pass').value;
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const errEl = document.getElementById('login-error');
+  if (res.ok) {
+    errEl.style.display = 'none';
+    loggedIn = true;
+    document.getElementById('logout-btn').style.display = '';
+    document.getElementById('login-pass').value = '';
+    refreshAdminView();
+  } else {
+    errEl.style.display = '';
+  }
+}
+
+async function doLogout() {
+  await fetch('/api/logout', { method: 'POST' });
+  loggedIn = false;
+  document.getElementById('logout-btn').style.display = 'none';
+  refreshAdminView();
+}
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
@@ -213,7 +295,7 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(d =>
     d.classList.toggle('active', d.id === t)
   );
-  if (t === 'admin') loadAdminTable();
+  if (t === 'admin') refreshAdminView();
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
@@ -322,7 +404,9 @@ function connectSSE() {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 async function loadAdminTable() {
-  const all = await fetch('/api/cameras/all').then(r => r.json());
+  const res = await fetch('/api/cameras/all');
+  if (res.status === 401) { loggedIn = false; refreshAdminView(); return; }
+  const all = await res.json();
   document.getElementById('cam-tbody').innerHTML = all.map(cam => {
     const badge = cam.active
       ? (cam.capture_policy === 'capture'
@@ -405,6 +489,7 @@ function esc(s) {
 initMap();
 loadCameras();
 connectSSE();
+checkAuth();
 </script>
 </body>
 </html>

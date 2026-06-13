@@ -2,21 +2,26 @@ import asyncio
 import datetime as dt
 import json
 import os
+import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
 DB_PATH = Path(os.getenv("DB_PATH", "nosy_seer.db"))
 STILLS_DIR = Path(os.getenv("STILLS_DIR", "stills"))
 SEED_FILE = Path(os.getenv("SEED_FILE", "seed.json"))
 CAPTURE_INTERVAL_S = int(os.getenv("CAPTURE_INTERVAL_S", "60"))
+SESSION_SECRET = os.getenv("SESSION_SECRET", secrets.token_hex(32))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "nosy123")
 
 _subs: list[asyncio.Queue] = []
 
@@ -156,7 +161,43 @@ async def lifespan(app: FastAPI):
 STILLS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="nosy-seer", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=False, same_site="lax")
 app.mount("/stills", StaticFiles(directory=str(STILLS_DIR)), name="stills")
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+def require_auth(request: Request):
+    if not request.session.get("logged_in"):
+        raise HTTPException(401, "not authenticated")
+
+
+@app.get("/api/me")
+def me(request: Request):
+    return {
+        "logged_in": bool(request.session.get("logged_in")),
+        "username": request.session.get("username"),
+    }
+
+
+@app.post("/api/login")
+def login(body: LoginBody, request: Request):
+    if body.username == ADMIN_USERNAME and body.password == ADMIN_PASSWORD:
+        request.session["logged_in"] = True
+        request.session["username"] = body.username
+        return {"ok": True}
+    raise HTTPException(401, "invalid credentials")
+
+
+@app.post("/api/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -200,13 +241,13 @@ def list_cameras():
 
 
 @app.get("/api/cameras/all")
-def list_all_cameras():
+def list_all_cameras(_: None = Depends(require_auth)):
     with _conn() as c:
         return [_row(r) for r in c.execute("SELECT * FROM cameras ORDER BY name")]
 
 
 @app.post("/api/cameras", status_code=201)
-def add_camera(body: CameraIn):
+def add_camera(body: CameraIn, _: None = Depends(require_auth)):
     with _conn() as c:
         cur = c.execute(
             """INSERT INTO cameras
@@ -225,7 +266,7 @@ _ALLOWED_COLS = frozenset(CameraUpdate.model_fields.keys())
 
 
 @app.patch("/api/cameras/{cam_id}")
-def update_camera(cam_id: int, body: CameraUpdate):
+def update_camera(cam_id: int, body: CameraUpdate, _: None = Depends(require_auth)):
     data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k in _ALLOWED_COLS}
     if not data:
         raise HTTPException(400, "nothing to update")
@@ -242,7 +283,7 @@ def update_camera(cam_id: int, body: CameraUpdate):
 
 
 @app.delete("/api/cameras/{cam_id}", status_code=204)
-def delete_camera(cam_id: int):
+def delete_camera(cam_id: int, _: None = Depends(require_auth)):
     with _conn() as c:
         c.execute("DELETE FROM cameras WHERE id=?", (cam_id,))
         c.commit()

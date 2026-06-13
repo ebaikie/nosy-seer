@@ -10,4 +10,7 @@ services:
       STILLS_DIR: /app/data/stills
       SEED_FILE: /app/data/seed.json
       CAPTURE_INTERVAL_S: "60"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "nosy123"
+      # SESSION_SECRET: "change-me-for-persistent-sessions"
     restart: unless-stopped
