@@ -67,6 +67,11 @@ def _init():
             c.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            c.execute("ALTER TABLE cameras ADD COLUMN last_capture_ok INTEGER")
+            c.commit()
+        except sqlite3.OperationalError:
+            pass
         c.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
@@ -75,6 +80,30 @@ def _init():
         """)
         c.commit()
     _seed()
+    _purge_placeholder_stills()
+
+
+def _purge_placeholder_stills():
+    """Delete existing placeholder latest.jpg files and mark those cameras unavailable."""
+    if not STILLS_DIR.exists():
+        return
+    to_mark = []
+    for cam_dir in STILLS_DIR.iterdir():
+        if not cam_dir.is_dir():
+            continue
+        latest = cam_dir / "latest.jpg"
+        try:
+            if latest.exists() and latest.stat().st_size == 6393:
+                if hashlib.md5(latest.read_bytes()).hexdigest() in SKIP_IMAGE_HASHES:
+                    latest.unlink(missing_ok=True)
+                    to_mark.append(int(cam_dir.name))
+        except (OSError, ValueError):
+            pass
+    if to_mark:
+        with _conn() as c:
+            for cam_id in to_mark:
+                c.execute("UPDATE cameras SET last_capture_ok=0 WHERE id=?", (cam_id,))
+            c.commit()
 
 
 def _seed():
@@ -163,6 +192,10 @@ async def capture_loop():
         if not blob:
             return
         if hashlib.md5(blob).hexdigest() in SKIP_IMAGE_HASHES:
+            if cam.get("last_capture_ok") != 0:
+                with _conn() as c:
+                    c.execute("UPDATE cameras SET last_capture_ok=0 WHERE id=?", (cam["id"],))
+                    c.commit()
             return
         _last_captured[cam["id"]] = dt.datetime.utcnow().timestamp()
         ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
@@ -171,6 +204,10 @@ async def capture_loop():
         (cam_dir / f"{ts}.jpg").write_bytes(blob)
         (cam_dir / "latest.jpg").write_bytes(blob)
         _prune(cam_dir, cam["keep_last_n"])
+        if cam.get("last_capture_ok") != 1:
+            with _conn() as c:
+                c.execute("UPDATE cameras SET last_capture_ok=1 WHERE id=?", (cam["id"],))
+                c.commit()
         msg = json.dumps({"camera_id": cam["id"], "ts": ts})
         dead = []
         for q in list(_subs):

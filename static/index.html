@@ -541,8 +541,14 @@ function showTab(t) {
 
 // ── Map ───────────────────────────────────────────────────────────────────────
 
+// Camera is visible if it's not a capture camera that's confirmed dead.
+// null (untried) and 1 (valid) are shown; 0 (confirmed unavailable) is hidden.
+function isLive(cam) {
+  return cam.capture_policy !== 'capture' || cam.last_capture_ok !== 0;
+}
+
 function camToFeature(cam) {
-  if (!cam.lat || !cam.lon) return null;
+  if (!cam.lat || !cam.lon || !isLive(cam)) return null;
   return {
     type: 'Feature',
     geometry: { type: 'Point', coordinates: [cam.lon, cam.lat] },
@@ -880,7 +886,7 @@ function tlUpdateCounter() {
 
 function renderGrid() {
   const el = document.getElementById('grid-items');
-  const cap = cameras.filter(c => c.capture_policy === 'capture');
+  const cap = cameras.filter(c => c.capture_policy === 'capture' && isLive(c));
   if (!cap.length) { el.innerHTML = '<p style="color:#64748b;font-size:13px">No capture cameras yet.</p>'; return; }
   el.innerHTML = cap.map(cam => `
     <div class="card" data-id="${cam.id}">
@@ -938,6 +944,15 @@ function connectSSE() {
   es.addEventListener('still', e => {
     const { camera_id, ts } = JSON.parse(e.data);
     lastTs[camera_id] = ts;
+    // If this camera was hidden (dead), mark it live and re-render map + grid.
+    const cam = cameras.find(c => c.id === camera_id);
+    if (cam && cam.last_capture_ok !== 1) {
+      cam.last_capture_ok = 1;
+      updateMapSource();
+      renderGrid();
+      if (selected && selected.id === camera_id && tlIsLive) refreshDetailLive(selected);
+      return;
+    }
     const card = document.querySelector(`.card[data-id="${camera_id}"]`);
     if (card) {
       const img = card.querySelector('img');
