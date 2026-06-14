@@ -400,8 +400,10 @@
           <input name="keep_last_n" type="number" min="0" value="1">
         </div>
         <div>
-          <label>Capture interval (seconds, blank = global 60s)</label>
-          <input name="capture_interval_s" type="number" min="60" step="60" placeholder="e.g. 1800">
+          <label>Capture interval (blank = global 60s)</label>
+          <input name="capture_interval_s" type="text" placeholder="e.g. 30m, 1h, 90s"
+                 oninput="intervalHint(this.value)" autocomplete="off">
+          <div id="interval-hint" style="font-size:11px;margin-top:4px;min-height:15px;color:#64748b"></div>
         </div>
         <div style="display:flex;align-items:flex-end">
           <button type="submit" id="form-submit-btn" class="btn btn-primary">Add camera</button>
@@ -931,8 +933,7 @@ async function loadAdminTable() {
           ? '<span class="badge b-capture">capture</span>'
           : '<span class="badge b-embed">embed</span>')
       : '<span class="badge b-inactive">inactive</span>';
-    const ivl = cam.capture_interval_s ? (cam.capture_interval_s % 3600 === 0
-      ? `${cam.capture_interval_s/3600}h` : `${cam.capture_interval_s/60}m`) : '—';
+    const ivl = cam.capture_interval_s ? fmtInterval(cam.capture_interval_s) : '—';
     return `<tr>
       <td>${esc(cam.name)}</td><td>${cam.category}</td><td>${badge}</td>
       <td>${cam.keep_last_n === 0 ? '∞' : cam.keep_last_n}</td>
@@ -963,7 +964,9 @@ function editCam(id) {
   f.querySelector('[name=stream_url]').value = cam.stream_url || '';
   f.querySelector('[name=source_page]').value = cam.source_page || '';
   f.querySelector('[name=keep_last_n]').value = cam.keep_last_n ?? 1;
-  f.querySelector('[name=capture_interval_s]').value = cam.capture_interval_s ?? '';
+  const ivlStr = cam.capture_interval_s ? fmtInterval(cam.capture_interval_s) : '';
+  f.querySelector('[name=capture_interval_s]').value = ivlStr;
+  intervalHint(ivlStr);
   f.querySelector('[name=lat]').value = cam.lat ?? '';
   f.querySelector('[name=lon]').value = cam.lon ?? '';
   if (cam.lat && cam.lon && pickerMap) {
@@ -981,6 +984,7 @@ function cancelEdit() {
   document.getElementById('add-form').reset();
   document.getElementById('add-form').querySelector('[name=keep_last_n]').value = '1';
   document.getElementById('add-form').querySelector('[name=capture_interval_s]').value = '';
+  intervalHint('');
   resetPicker();
 }
 
@@ -989,14 +993,16 @@ document.getElementById('add-form').addEventListener('submit', async e => {
   const body = {};
   if (editingId) {
     for (const [k, v] of new FormData(e.target).entries()) {
-      if (['lat','lon','capture_interval_s'].includes(k))  body[k] = v === '' ? null : Number(v);
-      else if (k === 'keep_last_n')                        body[k] = v === '' ? 1 : Number(v);
-      else                                                 body[k] = v === '' ? null : v;
+      if (k === 'capture_interval_s')       body[k] = parseInterval(v);
+      else if (['lat','lon'].includes(k))   body[k] = v === '' ? null : Number(v);
+      else if (k === 'keep_last_n')         body[k] = v === '' ? 1 : Number(v);
+      else                                  body[k] = v === '' ? null : v;
     }
   } else {
     for (const [k, v] of new FormData(e.target).entries()) {
+      if (k === 'capture_interval_s') { const s = parseInterval(v); if (s != null) body[k] = s; continue; }
       if (v === '') continue;
-      body[k] = ['lat','lon','keep_last_n','capture_interval_s'].includes(k) ? Number(v) : v;
+      body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
     }
   }
   const url = editingId ? `/api/cameras/${editingId}` : '/api/cameras';
@@ -1012,6 +1018,7 @@ document.getElementById('add-form').addEventListener('submit', async e => {
       e.target.reset();
       e.target.querySelector('[name=keep_last_n]').value = '1';
       e.target.querySelector('[name=capture_interval_s]').value = '';
+      intervalHint('');
       resetPicker();
     }
     loadAdminTable();
@@ -1078,6 +1085,47 @@ function resetPicker() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function parseInterval(str) {
+  if (!str || !str.trim()) return null;
+  let total = 0, found = false;
+  for (const m of str.trim().matchAll(/(\d+(?:\.\d+)?)\s*(h(?:r|ours?)?|m(?:in(?:utes?)?)?|s(?:ec(?:onds?)?)?)?/gi)) {
+    if (!m[1]) continue;
+    found = true;
+    const n = parseFloat(m[1]);
+    const u = (m[2] || 's').toLowerCase();
+    if (u[0] === 'h') total += n * 3600;
+    else if (u[0] === 'm') total += n * 60;
+    else total += n;
+  }
+  return found ? Math.max(60, Math.round(total)) : null;
+}
+
+function fmtInterval(s) {
+  if (!s) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const parts = [];
+  if (h)   parts.push(`${h}h`);
+  if (m)   parts.push(`${m}m`);
+  if (sec) parts.push(`${sec}s`);
+  return parts.join(' ') || `${s}s`;
+}
+
+function intervalHint(val) {
+  const el = document.getElementById('interval-hint');
+  if (!el) return;
+  if (!val || !val.trim()) { el.textContent = ''; return; }
+  const s = parseInterval(val);
+  if (s === null) {
+    el.style.color = '#f87171';
+    el.textContent = 'Unrecognised — try 30m, 1h, 90s, 1h30m';
+  } else {
+    el.style.color = '#34d399';
+    el.textContent = `= ${fmtInterval(s)} (${s}s)`;
+  }
+}
 
 function timeAgo(ts) {
   if (!ts) return '';
