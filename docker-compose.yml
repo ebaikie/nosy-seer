@@ -4,7 +4,7 @@ services:
     ports:
       - "5075:8000"
     volumes:
-      - ./data:/app/data
+      - /mnt/data/nosy-seer:/app/data
       - ./static:/app/static
     environment:
       DB_PATH: /app/data/nosy_seer.db

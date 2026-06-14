@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import secrets
@@ -14,6 +15,12 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
+
+# MD5 hashes of known placeholder/error images that should not be stored.
+# Add more hashes here if other providers serve "unavailable" placeholders.
+SKIP_IMAGE_HASHES: frozenset[str] = frozenset([
+    "aa5d4eb469068fe6f1a86bf2100145fd",  # NZTA "temporarily unavailable" black screen
+])
 
 DB_PATH = Path(os.getenv("DB_PATH", "nosy_seer.db"))
 STILLS_DIR = Path(os.getenv("STILLS_DIR", "stills"))
@@ -147,6 +154,34 @@ def _prune(cam_dir: Path, keep: int):
 
 async def capture_loop():
     await asyncio.sleep(3)
+    # Limit concurrent fetches so we don't flood source servers.
+    sem = asyncio.Semaphore(12)
+
+    async def _capture_one(client: httpx.AsyncClient, cam: dict) -> None:
+        async with sem:
+            blob = await _fetch(client, cam["snapshot_url"])
+        if not blob:
+            return
+        if hashlib.md5(blob).hexdigest() in SKIP_IMAGE_HASHES:
+            return
+        _last_captured[cam["id"]] = dt.datetime.utcnow().timestamp()
+        ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        cam_dir = STILLS_DIR / str(cam["id"])
+        cam_dir.mkdir(parents=True, exist_ok=True)
+        (cam_dir / f"{ts}.jpg").write_bytes(blob)
+        (cam_dir / "latest.jpg").write_bytes(blob)
+        _prune(cam_dir, cam["keep_last_n"])
+        msg = json.dumps({"camera_id": cam["id"], "ts": ts})
+        dead = []
+        for q in list(_subs):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                dead.append(q)
+        for q in dead:
+            if q in _subs:
+                _subs.remove(q)
+
     while True:
         t0 = dt.datetime.utcnow()
         now = t0.timestamp()
@@ -160,29 +195,7 @@ async def capture_loop():
                >= (cam["capture_interval_s"] or CAPTURE_INTERVAL_S)]
         if due:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                for i, cam in enumerate(due):
-                    if i > 0:
-                        await asyncio.sleep(0.5)
-                    blob = await _fetch(client, cam["snapshot_url"])
-                    if not blob:
-                        continue
-                    _last_captured[cam["id"]] = now
-                    ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-                    cam_dir = STILLS_DIR / str(cam["id"])
-                    cam_dir.mkdir(parents=True, exist_ok=True)
-                    (cam_dir / f"{ts}.jpg").write_bytes(blob)
-                    (cam_dir / "latest.jpg").write_bytes(blob)
-                    _prune(cam_dir, cam["keep_last_n"])
-                    msg = json.dumps({"camera_id": cam["id"], "ts": ts})
-                    dead = []
-                    for q in list(_subs):
-                        try:
-                            q.put_nowait(msg)
-                        except asyncio.QueueFull:
-                            dead.append(q)
-                    for q in dead:
-                        if q in _subs:
-                            _subs.remove(q)
+                await asyncio.gather(*[_capture_one(client, cam) for cam in due])
         elapsed = (dt.datetime.utcnow() - t0).total_seconds()
         await asyncio.sleep(max(1, CAPTURE_INTERVAL_S - elapsed))
 

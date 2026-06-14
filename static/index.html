@@ -735,6 +735,10 @@ async function selectCam(cam) {
   showMedia(cam);
   d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
+  if (map && cam.lat != null && cam.lon != null) {
+    map.easeTo({ center: [cam.lon, cam.lat], zoom: Math.max(map.getZoom(), 12), duration: 600 });
+  }
+
   if (cam.capture_policy === 'capture') {
     const frames = await fetch(`/api/cameras/${cam.id}/stills`).then(r => r.json());
     tlFrames = frames;
