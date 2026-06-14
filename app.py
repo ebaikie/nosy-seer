@@ -183,10 +183,11 @@ def _prune(cam_dir: Path, keep: int):
 
 async def capture_loop():
     await asyncio.sleep(3)
-    # Limit concurrent fetches so we don't flood source servers.
     sem = asyncio.Semaphore(12)
+    # Persistent client so connection pooling and DNS stay cached across cycles.
+    client = httpx.AsyncClient(follow_redirects=True)
 
-    async def _capture_one(client: httpx.AsyncClient, cam: dict) -> None:
+    async def _capture_one(cam: dict) -> None:
         async with sem:
             blob = await _fetch(client, cam["snapshot_url"])
         if not blob:
@@ -231,8 +232,7 @@ async def capture_loop():
                if now - _last_captured.get(cam["id"], 0)
                >= (cam["capture_interval_s"] or CAPTURE_INTERVAL_S)]
         if due:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                await asyncio.gather(*[_capture_one(client, cam) for cam in due])
+            await asyncio.gather(*[_capture_one(cam) for cam in due])
         elapsed = (dt.datetime.utcnow() - t0).total_seconds()
         await asyncio.sleep(max(1, CAPTURE_INTERVAL_S - elapsed))
 
