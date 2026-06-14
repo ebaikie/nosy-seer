@@ -5,6 +5,7 @@ services:
       - "5075:8000"
     volumes:
       - ./data:/app/data
+      - ./static:/app/static
     environment:
       DB_PATH: /app/data/nosy_seer.db
       STILLS_DIR: /app/data/stills

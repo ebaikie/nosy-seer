@@ -6,6 +6,7 @@
   <title>nosy-seer</title>
   <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/supercluster@8/dist/supercluster.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -446,7 +447,7 @@
 <script>
 const CAT_COLORS = {
   traffic:'#f59e0b', river:'#06b6d4', surf:'#8b5cf6',
-  port:'#ec4899', airport:'#10b981', scenic:'#64748b'
+  port:'#ec4899', airport:'#10b981', scenic:'#64748b', volcano:'#ef4444'
 };
 
 let cameras = [];
@@ -457,6 +458,7 @@ let lastTs = {};
 let loggedIn = false;
 let editingId = null;
 let hlsInstance = null;
+let scIndex = null; // Supercluster index
 
 // ── Timelapse state ───────────────────────────────────────────────────────────
 let tlFrames = [];
@@ -555,25 +557,56 @@ function camToFeature(cam) {
   };
 }
 
+function buildClusterIndex() {
+  scIndex = new Supercluster({ radius: 60, maxZoom: 13 });
+  scIndex.load(cameras.map(camToFeature).filter(Boolean));
+}
+
+function getClusterGeoJSON() {
+  if (!scIndex || !map) return { type: 'FeatureCollection', features: [] };
+  const b = map.getBounds();
+  return {
+    type: 'FeatureCollection',
+    features: scIndex.getClusters(
+      [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+      Math.floor(map.getZoom())
+    ),
+  };
+}
+
 function updateMapSource() {
   const src = map && map.getSource('cameras');
   if (!src) return;
-  src.setData({
-    type: 'FeatureCollection',
-    features: cameras.map(camToFeature).filter(Boolean),
-  });
+  buildClusterIndex();
+  src.setData(getClusterGeoJSON());
+}
+
+function fitCameras() {
+  if (!map || !cameras.length) return;
+  // Exclude Raoul Island (lon < 0) to avoid antimeridian wrapping
+  const cams = cameras.filter(c => c.lat && c.lon && c.lon > 0);
+  if (!cams.length) return;
+  const lons = cams.map(c => c.lon);
+  const lats = cams.map(c => c.lat);
+  const bounds = [
+    [Math.min(...lons), Math.min(...lats)],
+    [Math.max(...lons), Math.max(...lats)],
+  ];
+  const fit = () => map.fitBounds(bounds, { padding: 50, maxZoom: 10, duration: 800 });
+  if (map.loaded()) fit(); else map.once('load', fit);
 }
 
 function initMap() {
   map = new maplibregl.Map({
     container: 'map',
     style: 'https://tiles.openfreemap.org/styles/liberty',
-    center: [176.85, -39.49], zoom: 8,
+    center: [173, -41], zoom: 5,
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
     addMapLayers();
     updateMapSource();
+    fitCameras();
   });
 }
 
@@ -585,19 +618,31 @@ function addMapLayers() {
   map.addSource('cameras', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },
-    cluster: true,
-    clusterMaxZoom: 13,
-    clusterRadius: 50,
   });
 
   map.addLayer({
-    id: 'clusters',
+    id: 'camera-points',
     type: 'circle',
     source: 'cameras',
-    filter: ['has', 'point_count'],
     paint: {
-      'circle-color': '#0ea5e9',
-      'circle-radius': ['step', ['get', 'point_count'], 16, 6, 22, 15, 28],
+      'circle-color': ['case',
+        ['has', 'point_count'], '#0ea5e9',
+        ['match', ['get', 'category'],
+          'traffic', '#f59e0b',
+          'river',   '#06b6d4',
+          'surf',    '#8b5cf6',
+          'port',    '#ec4899',
+          'airport', '#10b981',
+          'scenic',  '#64748b',
+          'volcano', '#ef4444',
+          '#94a3b8',
+        ],
+      ],
+      'circle-radius': ['case',
+        ['has', 'point_count'],
+        ['step', ['get', 'point_count'], 16, 6, 22, 15, 28],
+        7,
+      ],
       'circle-stroke-width': 2,
       'circle-stroke-color': '#0f172a',
       'circle-opacity': 1,
@@ -611,61 +656,38 @@ function addMapLayers() {
     filter: ['has', 'point_count'],
     layout: {
       'text-field': ['to-string', ['get', 'point_count']],
-      'text-font': ['Noto Sans Bold', 'Noto Sans Regular'],
+      'text-font': ['Noto Sans Regular'],
       'text-size': 12,
     },
     paint: { 'text-color': '#0f172a' },
   });
 
-  map.addLayer({
-    id: 'unclustered-point',
-    type: 'circle',
-    source: 'cameras',
-    filter: ['!', ['has', 'point_count']],
-    paint: {
-      'circle-color': ['match', ['get', 'category'],
-        'traffic', '#f59e0b',
-        'river',   '#06b6d4',
-        'surf',    '#8b5cf6',
-        'port',    '#ec4899',
-        'airport', '#10b981',
-        'scenic',  '#64748b',
-        '#94a3b8',
-      ],
-      'circle-radius': 7,
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#0f172a',
-      'circle-opacity': 1,
-    },
-  });
-
-  // Cluster click → zoom in to expand (Promise API for MapLibre v4)
-  map.on('click', 'clusters', async e => {
-    const [f] = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
-    try {
-      const zoom = await map.getSource('cameras').getClusterExpansionZoom(f.properties.cluster_id);
-      map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.5 });
-    } catch (_) {
-      map.easeTo({ center: f.geometry.coordinates, zoom: map.getZoom() + 2 });
+  // Click: cluster → zoom in; individual pin → select camera
+  map.on('click', 'camera-points', e => {
+    const f = e.features[0];
+    if (f.properties.cluster) {
+      if (!scIndex) return;
+      try {
+        const zoom = scIndex.getClusterExpansionZoom(f.properties.cluster_id);
+        map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.5 });
+      } catch (_) {
+        map.easeTo({ center: f.geometry.coordinates, zoom: map.getZoom() + 2 });
+      }
+    } else {
+      const cam = cameras.find(c => c.id === +f.properties.cam_id);
+      if (cam) selectCam(cam);
     }
   });
 
-  // Individual pin click → select camera
-  map.on('click', 'unclustered-point', e => {
-    const cam = cameras.find(c => c.id === e.features[0].properties.cam_id);
-    if (cam) selectCam(cam);
-  });
+  map.on('mouseenter', 'camera-points', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'camera-points', () => { map.getCanvas().style.cursor = ''; });
 
-  // Cursors
-  ['clusters', 'unclustered-point'].forEach(layer => {
-    map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
-  });
-
-  // Hover popup on individual pins
-  map.on('mouseenter', 'unclustered-point', e => {
-    const props = e.features[0].properties;
-    const cam = cameras.find(c => c.id === props.cam_id);
+  // Hover popup on individual pins only
+  map.on('mouseenter', 'camera-points', e => {
+    const f = e.features[0];
+    if (f.properties.cluster) return;
+    const props = f.properties;
+    const cam = cameras.find(c => c.id === +props.cam_id);
     if (!cam) return;
     const ago = timeAgo(lastTs[cam.id]);
     const metaParts = [cam.category];
@@ -676,7 +698,7 @@ function addMapLayers() {
     const descHtml = cam.description
       ? `<div class="popup-desc">${esc(cam.description)}</div>` : '';
     hoverPopup
-      .setLngLat(e.features[0].geometry.coordinates)
+      .setLngLat(f.geometry.coordinates)
       .setHTML(`<div class="map-popup">${imgHtml}<div class="popup-body">
         <div class="popup-name">${esc(cam.name)}</div>
         ${descHtml}
@@ -684,7 +706,13 @@ function addMapLayers() {
       </div></div>`)
       .addTo(map);
   });
-  map.on('mouseleave', 'unclustered-point', () => { hoverPopup.remove(); });
+  map.on('mouseleave', 'camera-points', () => { hoverPopup.remove(); });
+
+  // Re-cluster on every pan/zoom
+  map.on('moveend', () => {
+    const src = map.getSource('cameras');
+    if (src && scIndex) src.setData(getClusterGeoJSON());
+  });
 }
 
 async function selectCam(cam) {
@@ -894,6 +922,7 @@ async function loadCameras() {
   cameras = await fetch('/api/cameras').then(r => r.json());
   updateMapSource();
   renderGrid();
+  fitCameras();
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
