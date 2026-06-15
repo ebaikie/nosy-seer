@@ -358,6 +358,29 @@
             <div style="font-size:12px; margin-top:4px; min-height:14px;"><span id="qe-msg"></span></div>
           </div>
         </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; padding-top:8px; border-top:1px solid #1e293b;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; color:#cbd5e1;">
+            <input type="checkbox" id="qe-daylight" style="width:14px; height:14px; accent-color:#38bdf8;"
+                   onchange="qeDaylightChange()">
+            Daylight only
+          </label>
+          <div id="qe-sun-buffer-wrap" style="display:flex; align-items:center; gap:5px;">
+            <label style="font-size:12px; color:#64748b;">Buffer</label>
+            <input id="qe-sun-buffer" type="number" min="0" value="0"
+                   style="width:60px; padding:4px 6px; font-size:12px;">
+            <span style="font-size:12px; color:#64748b;">min</span>
+          </div>
+          <span id="qe-sun-hint" style="font-size:12px; color:#64748b;"></span>
+        </div>
+        <div style="margin-top:10px; padding-top:8px; border-top:1px solid #1e293b;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;">
+            <label style="font-size:11px; color:#64748b;">Notes (admin only)</label>
+            <span id="qe-last-changed" style="font-size:11px; color:#475569;"></span>
+          </div>
+          <textarea id="qe-notes" rows="2"
+                    style="width:100%; box-sizing:border-box; padding:5px 8px; font-size:13px; resize:vertical;"
+                    placeholder="Internal notes…"></textarea>
+        </div>
       </div>
     </div>
 
@@ -431,6 +454,10 @@
           <label>Description</label>
           <textarea name="description" placeholder="North along SH2 from Watchman Rd roundabout"></textarea>
         </div>
+        <div class="full">
+          <label>Notes (admin only)</label>
+          <textarea name="notes" placeholder="Internal notes — not shown publicly"></textarea>
+        </div>
         <div>
           <label>Category</label>
           <select name="category">
@@ -482,6 +509,18 @@
           <input name="capture_interval_s" type="text" placeholder="e.g. 30m, 1h, 90s"
                  oninput="intervalHint(this.value)" autocomplete="off">
           <div id="interval-hint" style="font-size:11px;margin-top:4px;min-height:15px;color:#64748b"></div>
+        </div>
+        <div>
+          <label>Daylight only</label>
+          <label style="display:flex;align-items:center;gap:7px;margin-top:6px;cursor:pointer;">
+            <input type="checkbox" name="daylight_only" style="width:14px;height:14px;accent-color:#38bdf8;">
+            Skip night captures
+          </label>
+        </div>
+        <div>
+          <label>Sun buffer (min)</label>
+          <input name="sun_buffer_m" type="number" min="0" value="0" style="width:80px;">
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">Extend window before sunrise &amp; after sunset</div>
         </div>
         <div style="display:flex;align-items:flex-end">
           <button type="submit" id="form-submit-btn" class="btn btn-primary">Add camera</button>
@@ -1265,6 +1304,7 @@ function editCam(id) {
   const f = document.getElementById('add-form');
   f.querySelector('[name=name]').value = cam.name || '';
   f.querySelector('[name=description]').value = cam.description || '';
+  f.querySelector('[name=notes]').value = cam.notes || '';
   f.querySelector('[name=category]').value = cam.category || 'traffic';
   f.querySelector('[name=capture_policy]').value = cam.capture_policy || 'capture';
   f.querySelector('[name=snapshot_url]').value = cam.snapshot_url || '';
@@ -1274,6 +1314,8 @@ function editCam(id) {
   const ivlStr = cam.capture_interval_s ? fmtInterval(cam.capture_interval_s) : '';
   f.querySelector('[name=capture_interval_s]').value = ivlStr;
   intervalHint(ivlStr);
+  f.querySelector('[name=daylight_only]').checked = !!cam.daylight_only;
+  f.querySelector('[name=sun_buffer_m]').value = cam.sun_buffer_m ?? 0;
   f.querySelector('[name=lat]').value = cam.lat ?? '';
   f.querySelector('[name=lon]').value = cam.lon ?? '';
   if (cam.lat && cam.lon && pickerMap) {
@@ -1291,6 +1333,7 @@ function cancelEdit() {
   document.getElementById('add-form').reset();
   document.getElementById('add-form').querySelector('[name=keep_last_n]').value = '1';
   document.getElementById('add-form').querySelector('[name=capture_interval_s]').value = '';
+  document.getElementById('add-form').querySelector('[name=sun_buffer_m]').value = '0';
   intervalHint('');
   resetPicker();
 }
@@ -1298,16 +1341,21 @@ function cancelEdit() {
 document.getElementById('add-form').addEventListener('submit', async e => {
   e.preventDefault();
   const body = {};
+  body.daylight_only = e.target.querySelector('[name=daylight_only]').checked;
   if (editingId) {
     for (const [k, v] of new FormData(e.target).entries()) {
-      if (k === 'capture_interval_s')       body[k] = parseInterval(v);
-      else if (['lat','lon'].includes(k))   body[k] = v === '' ? null : Number(v);
-      else if (k === 'keep_last_n')         body[k] = v === '' ? 1 : Number(v);
-      else                                  body[k] = v === '' ? null : v;
+      if (k === 'daylight_only') continue;
+      if (k === 'capture_interval_s')            body[k] = parseInterval(v);
+      else if (['lat','lon'].includes(k))        body[k] = v === '' ? null : Number(v);
+      else if (k === 'keep_last_n')              body[k] = v === '' ? 1 : Number(v);
+      else if (k === 'sun_buffer_m')             body[k] = Number(v) || 0;
+      else                                       body[k] = v === '' ? null : v;
     }
   } else {
     for (const [k, v] of new FormData(e.target).entries()) {
+      if (k === 'daylight_only') continue;
       if (k === 'capture_interval_s') { const s = parseInterval(v); if (s != null) body[k] = s; continue; }
+      if (k === 'sun_buffer_m') { body[k] = Number(v) || 0; continue; }
       if (v === '') continue;
       body[k] = ['lat','lon','keep_last_n'].includes(k) ? Number(v) : v;
     }
@@ -1325,6 +1373,7 @@ document.getElementById('add-form').addEventListener('submit', async e => {
       e.target.reset();
       e.target.querySelector('[name=keep_last_n]').value = '1';
       e.target.querySelector('[name=capture_interval_s]').value = '';
+      e.target.querySelector('[name=sun_buffer_m]').value = '0';
       intervalHint('');
       resetPicker();
     }
@@ -1484,17 +1533,33 @@ function qeIntervalHint(val) {
   }
 }
 
-function updateQuickEdit() {
+function qeDaylightChange() {
+  const on = document.getElementById('qe-daylight').checked;
+  document.getElementById('qe-sun-buffer-wrap').style.opacity = on ? '1' : '0.4';
+}
+
+async function updateQuickEdit() {
   const panel = document.getElementById('quick-edit');
   const show = loggedIn && selected && selected.capture_policy === 'capture';
   panel.style.display = show ? '' : 'none';
-  if (show) {
-    document.getElementById('qe-keep').value = selected.keep_last_n ?? '';
-    const ivl = selected.capture_interval_s ? fmtInterval(selected.capture_interval_s) : '';
-    document.getElementById('qe-interval').value = ivl;
-    qeIntervalHint(ivl);
-    document.getElementById('qe-msg').textContent = '';
-  }
+  if (!show) return;
+  document.getElementById('qe-keep').value = selected.keep_last_n ?? '';
+  const ivl = selected.capture_interval_s ? fmtInterval(selected.capture_interval_s) : '';
+  document.getElementById('qe-interval').value = ivl;
+  qeIntervalHint(ivl);
+  document.getElementById('qe-msg').textContent = '';
+  document.getElementById('qe-daylight').checked = !!selected.daylight_only;
+  document.getElementById('qe-sun-buffer').value = selected.sun_buffer_m ?? 0;
+  document.getElementById('qe-notes').value = selected.notes || '';
+  const lc = selected.last_changed_ts;
+  document.getElementById('qe-last-changed').textContent = lc ? `Last change: ${fmtTsFull(lc)}` : '';
+  qeDaylightChange();
+  // Fetch today's sunrise/sunset for this camera's location
+  document.getElementById('qe-sun-hint').textContent = '';
+  try {
+    const sun = await fetch(`/api/cameras/${selected.id}/sun`).then(r => r.json());
+    document.getElementById('qe-sun-hint').textContent = `Sunrise ${sun.sunrise} · Sunset ${sun.sunset} NZT`;
+  } catch {}
 }
 
 async function quickEditSave() {
@@ -1512,13 +1577,21 @@ async function quickEditSave() {
   const res = await fetch(`/api/cameras/${selected.id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keep_last_n: keep, capture_interval_s: interval }),
+    body: JSON.stringify({
+      keep_last_n: keep,
+      capture_interval_s: interval,
+      daylight_only: document.getElementById('qe-daylight').checked,
+      sun_buffer_m: Number(document.getElementById('qe-sun-buffer').value) || 0,
+      notes: document.getElementById('qe-notes').value.trim() || null,
+    }),
   });
   if (res.ok) {
     const updated = await res.json();
     const idx = cameras.findIndex(c => c.id === selected.id);
     if (idx !== -1) cameras[idx] = updated;
     selected = updated;
+    const lc2 = updated.last_changed_ts;
+    document.getElementById('qe-last-changed').textContent = lc2 ? `Last change: ${fmtTsFull(lc2)}` : '';
     msg.style.color = '#34d399';
     msg.textContent = 'Saved';
     setTimeout(() => { if (msg.textContent === 'Saved') msg.textContent = ''; }, 2000);

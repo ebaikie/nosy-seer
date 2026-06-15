@@ -14,6 +14,9 @@ from PIL import Image, ImageChops
 
 import httpx
 import itsdangerous
+from astral import LocationInfo
+from astral.sun import sun as _astral_sun
+from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -81,6 +84,17 @@ def _init():
             c.commit()
         except sqlite3.OperationalError:
             pass
+        for _col, _def in [
+            ("daylight_only",   "INTEGER DEFAULT 0"),
+            ("sun_buffer_m",    "INTEGER DEFAULT 0"),
+            ("last_changed_ts", "TEXT"),
+            ("notes",           "TEXT"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE cameras ADD COLUMN {_col} {_def}")
+                c.commit()
+            except sqlite3.OperationalError:
+                pass
         c.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
@@ -227,6 +241,36 @@ def _motion_score(old_bytes: bytes, new_bytes: bytes) -> float:
         return 0.0
 
 
+_NZ_TZ          = ZoneInfo("Pacific/Auckland")
+_NZ_DEFAULT_LAT = -41.29   # Wellington fallback for cameras without coords
+_NZ_DEFAULT_LON = 174.78
+
+
+def _daylight_window(cam: dict):
+    """Return (rise, set) as aware datetimes, or None if calc fails."""
+    lat = cam.get("lat") or _NZ_DEFAULT_LAT
+    lon = cam.get("lon") or _NZ_DEFAULT_LON
+    buf = int(cam.get("sun_buffer_m") or 0)
+    try:
+        loc = LocationInfo(latitude=lat, longitude=lon, timezone="Pacific/Auckland")
+        now = dt.datetime.now(_NZ_TZ)
+        s = _astral_sun(loc.observer, date=now.date(), tzinfo=_NZ_TZ)
+        return (s["sunrise"] - dt.timedelta(minutes=buf),
+                s["sunset"]  + dt.timedelta(minutes=buf))
+    except Exception:
+        return None
+
+
+def _in_daylight_window(cam: dict) -> bool:
+    if not cam.get("daylight_only"):
+        return True
+    window = _daylight_window(cam)
+    if window is None:
+        return True   # calculation failed — don't suppress
+    rise, sett = window
+    return rise <= dt.datetime.now(_NZ_TZ) <= sett
+
+
 def _prune(cam_dir: Path, keep: int):
     if keep <= 0:
         return
@@ -253,6 +297,8 @@ async def capture_loop():
     client = httpx.AsyncClient(follow_redirects=True)
 
     async def _capture_one(cam: dict) -> None:
+        if not _in_daylight_window(cam):
+            return
         async with sem:
             blob = await _fetch(client, cam["snapshot_url"])
         if not blob:
@@ -276,19 +322,32 @@ async def capture_loop():
         except OSError:
             pass
 
+        # Discard if identical to previous (byte match or perceptually identical)
+        if prev_bytes is not None:
+            score = _motion_score(prev_bytes, blob)
+            if blob == prev_bytes or score < 1.0:
+                with _conn() as c:
+                    c.execute(
+                        "UPDATE cameras SET last_captured_ts=?, last_capture_ok=1 WHERE id=?",
+                        (ts, cam["id"]),
+                    )
+                    c.commit()
+                return
+        else:
+            score = 0.0
+
         (cam_dir / f"{ts}.jpg").write_bytes(blob)
         latest.write_bytes(blob)
         _prune(cam_dir, cam["keep_last_n"])
 
-        score = _motion_score(prev_bytes, blob) if prev_bytes else 0.0
         with _conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO motion_scores (camera_id, ts, score) VALUES (?,?,?)",
                 (cam["id"], ts, score),
             )
             c.execute(
-                "UPDATE cameras SET last_captured_ts=?, last_capture_ok=1 WHERE id=?",
-                (ts, cam["id"]),
+                "UPDATE cameras SET last_captured_ts=?, last_changed_ts=?, last_capture_ok=1 WHERE id=?",
+                (ts, ts, cam["id"]),
             )
             c.commit()
         msg = json.dumps({"camera_id": cam["id"], "ts": ts, "motion": round(score, 1)})
@@ -347,28 +406,30 @@ class LoginBody(BaseModel):
     remember: bool = False
 
 
-@app.middleware("http")
-async def restore_remember_me(request: Request, call_next):
-    if not request.session.get("logged_in"):
-        token = request.cookies.get(REMEMBER_COOKIE)
-        if token:
-            try:
-                signer = itsdangerous.TimestampSigner(SESSION_SECRET)
-                username = signer.unsign(token, max_age=REMEMBER_MAX_AGE).decode()
-                request.session["logged_in"] = True
-                request.session["username"] = username
-            except Exception:
-                pass
-    return await call_next(request)
+def _restore_remember_session(request: Request) -> None:
+    if request.session.get("logged_in"):
+        return
+    token = request.cookies.get(REMEMBER_COOKIE)
+    if not token:
+        return
+    try:
+        signer = itsdangerous.TimestampSigner(SESSION_SECRET)
+        username = signer.unsign(token, max_age=REMEMBER_MAX_AGE).decode()
+        request.session["logged_in"] = True
+        request.session["username"] = username
+    except Exception:
+        pass
 
 
 def require_auth(request: Request):
+    _restore_remember_session(request)
     if not request.session.get("logged_in"):
         raise HTTPException(401, "not authenticated")
 
 
 @app.get("/api/me")
 def me(request: Request):
+    _restore_remember_session(request)
     return {
         "logged_in": bool(request.session.get("logged_in")),
         "username": request.session.get("username"),
@@ -428,6 +489,9 @@ class CameraIn(BaseModel):
     capture_policy: str = "capture"
     keep_last_n: int = 1
     capture_interval_s: Optional[int] = None
+    daylight_only: bool = False
+    sun_buffer_m: int = 0
+    notes: Optional[str] = None
     active: bool = True
 
 
@@ -443,6 +507,9 @@ class CameraUpdate(BaseModel):
     capture_policy: Optional[str] = None
     keep_last_n: Optional[int] = None
     capture_interval_s: Optional[int] = None
+    daylight_only: Optional[bool] = None
+    sun_buffer_m: Optional[int] = None
+    notes: Optional[str] = None
     active: Optional[bool] = None
 
 
@@ -469,12 +536,13 @@ def add_camera(body: CameraIn, _: None = Depends(require_auth)):
             """INSERT INTO cameras
                (name,description,category,lat,lon,source_page,
                 snapshot_url,stream_url,capture_policy,keep_last_n,
-                capture_interval_s,active)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                capture_interval_s,daylight_only,sun_buffer_m,notes,active)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (body.name, body.description, body.category, body.lat, body.lon,
              body.source_page, body.snapshot_url, body.stream_url,
              body.capture_policy, body.keep_last_n,
-             body.capture_interval_s, int(body.active)),
+             body.capture_interval_s, int(body.daylight_only), body.sun_buffer_m,
+             body.notes, int(body.active)),
         )
         c.commit()
         return _row(c.execute("SELECT * FROM cameras WHERE id=?", (cur.lastrowid,)).fetchone())
@@ -523,6 +591,20 @@ def get_motion(cam_id: int):
             (cam_id,),
         ).fetchall()
     return {r["ts"]: round(r["score"], 1) for r in rows}
+
+
+@app.get("/api/cameras/{cam_id}/sun")
+def camera_sun(cam_id: int):
+    with _conn() as c:
+        row = c.execute("SELECT lat, lon FROM cameras WHERE id=?", (cam_id,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    cam = {"lat": row["lat"], "lon": row["lon"], "sun_buffer_m": 0, "daylight_only": True}
+    window = _daylight_window(cam)
+    if window is None:
+        raise HTTPException(500, "sunrise/sunset calculation failed")
+    rise, sett = window
+    return {"sunrise": rise.strftime("%H:%M"), "sunset": sett.strftime("%H:%M")}
 
 
 @app.get("/api/events/stills")
