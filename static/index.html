@@ -51,7 +51,7 @@
       background: #000; flex-shrink: 0; display: none;
     }
     #detail-embed {
-      width: 360px; height: 270px; border-radius: 8px;
+      width: 480px; height: 320px; border-radius: 8px;
       border: none; flex-shrink: 0; display: none; background: #000;
     }
 
@@ -338,6 +338,27 @@
         <span id="motion-label">motion —</span>
       </div>
       <a id="detail-link" href="#" target="_blank" rel="noopener">Source page ↗</a>
+      <div id="quick-edit" style="display:none; margin-top:12px; padding-top:10px; border-top:1px solid #334155;">
+        <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+          <div>
+            <label style="font-size:11px; color:#64748b; display:block; margin-bottom:3px;">Keep last N stills</label>
+            <input id="qe-keep" type="number" min="0" style="width:90px; padding:5px 8px; font-size:13px;">
+            <div style="min-height:17px;"></div>
+          </div>
+          <div>
+            <label style="font-size:11px; color:#64748b; display:block; margin-bottom:3px;">Capture interval</label>
+            <input id="qe-interval" type="text" placeholder="e.g. 30m, 1h, 90s"
+                   oninput="qeIntervalHint(this.value)"
+                   style="width:140px; padding:5px 8px; font-size:13px;">
+            <div id="qe-interval-hint" style="font-size:11px; margin-top:3px; min-height:14px;"></div>
+          </div>
+          <div>
+            <div style="min-height:18px;"></div>
+            <button class="btn btn-primary btn-sm" onclick="quickEditSave()" style="margin-top:2px;">Save</button>
+            <div style="font-size:12px; margin-top:4px; min-height:14px;"><span id="qe-msg"></span></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- timelapse — full-width second row, capture cameras only -->
@@ -382,7 +403,11 @@
       <input id="login-pass" type="password" autocomplete="current-password" placeholder="••••••••"
              onkeydown="if(event.key==='Enter')doLogin()">
     </div>
-    <div style="margin-top:16px">
+    <div style="margin-top:12px; display:flex; align-items:center; gap:7px;">
+      <input type="checkbox" id="login-remember" style="width:14px; height:14px; cursor:pointer; accent-color:#38bdf8;">
+      <label for="login-remember" style="font-size:13px; color:#94a3b8; cursor:pointer; user-select:none;">Keep me logged in</label>
+    </div>
+    <div style="margin-top:14px">
       <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
     </div>
     <div id="login-error">Invalid username or password.</div>
@@ -622,14 +647,16 @@ function refreshAdminView() {
     loadAdminTable();
     if (!pickerInited) requestAnimationFrame(() => requestAnimationFrame(initPickerMap));
   }
+  updateQuickEdit();
 }
 
 async function doLogin() {
   const username = document.getElementById('login-user').value.trim();
   const password = document.getElementById('login-pass').value;
+  const remember = document.getElementById('login-remember').checked;
   const res = await fetch('/api/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, remember }),
   });
   const errEl = document.getElementById('login-error');
   if (res.ok) {
@@ -964,6 +991,7 @@ async function selectCam(cam) {
   } else {
     document.getElementById('motion-badge').style.display = 'none';
   }
+  updateQuickEdit();
 }
 
 // ── Media display ─────────────────────────────────────────────────────────────
@@ -986,8 +1014,14 @@ function showMedia(cam) {
     embed.style.display = 'none';
   } else if (cam.stream_url) {
     img.style.display = 'none';
-    if (cam.stream_url.includes('.m3u8')) {
-      video.style.display = ''; embed.style.display = 'none';
+    if (cam.stream_url.includes('.m3u8') && cam.source_page) {
+      // Prefer the dedicated player page as iframe — more reliable than HLS.js for
+      // streams like Ant Media Server that have their own working web player.
+      video.style.display = 'none';
+      embed.src = cam.source_page;
+      embed.style.display = 'block';
+    } else if (cam.stream_url.includes('.m3u8')) {
+      video.style.display = 'block'; embed.style.display = 'none';
       if (Hls.isSupported()) {
         hlsInstance = new Hls();
         hlsInstance.loadSource(cam.stream_url);
@@ -996,19 +1030,17 @@ function showMedia(cam) {
           if (data.fatal) {
             hlsInstance.destroy(); hlsInstance = null;
             video.style.display = 'none';
-            embed.src = cam.stream_url;
-            embed.style.display = '';
+            embed.style.display = 'block';
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = cam.stream_url;
       } else {
-        video.style.display = 'none';
-        embed.src = cam.stream_url; embed.style.display = '';
+        video.style.display = 'none'; embed.style.display = 'block';
       }
     } else {
       video.style.display = 'none';
-      embed.src = cam.stream_url; embed.style.display = '';
+      embed.src = cam.stream_url; embed.style.display = 'block';
     }
   } else {
     img.src = ''; img.style.cursor = 'default';
@@ -1435,6 +1467,65 @@ function fmtTsFull(ts) {
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Quick-edit panel ──────────────────────────────────────────────────────────
+
+function qeIntervalHint(val) {
+  const el = document.getElementById('qe-interval-hint');
+  if (!val || !val.trim()) { el.textContent = ''; return; }
+  const s = parseInterval(val);
+  if (s === null) {
+    el.style.color = '#f87171';
+    el.textContent = 'try 30m, 1h, 90s, 1h30m';
+  } else {
+    el.style.color = '#34d399';
+    el.textContent = `= ${fmtInterval(s)} (${s}s)`;
+  }
+}
+
+function updateQuickEdit() {
+  const panel = document.getElementById('quick-edit');
+  const show = loggedIn && selected && selected.capture_policy === 'capture';
+  panel.style.display = show ? '' : 'none';
+  if (show) {
+    document.getElementById('qe-keep').value = selected.keep_last_n ?? '';
+    const ivl = selected.capture_interval_s ? fmtInterval(selected.capture_interval_s) : '';
+    document.getElementById('qe-interval').value = ivl;
+    qeIntervalHint(ivl);
+    document.getElementById('qe-msg').textContent = '';
+  }
+}
+
+async function quickEditSave() {
+  if (!selected) return;
+  const keep = parseInt(document.getElementById('qe-keep').value, 10);
+  const interval = parseInterval(document.getElementById('qe-interval').value);
+  const msg = document.getElementById('qe-msg');
+  if (interval === null) {
+    msg.style.color = '#f87171';
+    msg.textContent = 'Invalid interval';
+    return;
+  }
+  msg.style.color = '#94a3b8';
+  msg.textContent = 'Saving…';
+  const res = await fetch(`/api/cameras/${selected.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keep_last_n: keep, capture_interval_s: interval }),
+  });
+  if (res.ok) {
+    const updated = await res.json();
+    const idx = cameras.findIndex(c => c.id === selected.id);
+    if (idx !== -1) cameras[idx] = updated;
+    selected = updated;
+    msg.style.color = '#34d399';
+    msg.textContent = 'Saved';
+    setTimeout(() => { if (msg.textContent === 'Saved') msg.textContent = ''; }, 2000);
+  } else {
+    msg.style.color = '#f87171';
+    msg.textContent = (await res.json().catch(() => ({}))).detail || 'Error';
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

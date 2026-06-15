@@ -13,8 +13,9 @@ from typing import Optional
 from PIL import Image, ImageChops
 
 import httpx
+import itsdangerous
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -330,15 +331,35 @@ async def lifespan(app: FastAPI):
 STILLS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="nosy-seer", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=False, same_site="lax")
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=False, same_site="lax", max_age=None)
 app.mount("/stills", StaticFiles(directory=str(STILLS_DIR)), name="stills")
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
+REMEMBER_COOKIE  = "nosy_remember"
+REMEMBER_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+
 class LoginBody(BaseModel):
     username: str
     password: str
+    remember: bool = False
+
+
+@app.middleware("http")
+async def restore_remember_me(request: Request, call_next):
+    if not request.session.get("logged_in"):
+        token = request.cookies.get(REMEMBER_COOKIE)
+        if token:
+            try:
+                signer = itsdangerous.TimestampSigner(SESSION_SECRET)
+                username = signer.unsign(token, max_age=REMEMBER_MAX_AGE).decode()
+                request.session["logged_in"] = True
+                request.session["username"] = username
+            except Exception:
+                pass
+    return await call_next(request)
 
 
 def require_auth(request: Request):
@@ -359,7 +380,13 @@ def login(body: LoginBody, request: Request):
     if _check_creds(body.username, body.password):
         request.session["logged_in"] = True
         request.session["username"] = body.username
-        return {"ok": True}
+        response = JSONResponse({"ok": True})
+        if body.remember:
+            signer = itsdangerous.TimestampSigner(SESSION_SECRET)
+            token = signer.sign(body.username.encode()).decode()
+            response.set_cookie(REMEMBER_COOKIE, token, max_age=REMEMBER_MAX_AGE,
+                                httponly=True, samesite="lax", path="/")
+        return response
     raise HTTPException(401, "invalid credentials")
 
 
@@ -382,7 +409,9 @@ def change_password(body: ChangePasswordBody, request: Request, _: None = Depend
 @app.post("/api/logout")
 def logout(request: Request):
     request.session.clear()
-    return {"ok": True}
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(REMEMBER_COOKIE, path="/")
+    return response
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
