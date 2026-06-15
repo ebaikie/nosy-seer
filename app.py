@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import secrets
@@ -8,6 +9,8 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+
+from PIL import Image, ImageChops
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -72,15 +75,52 @@ def _init():
             c.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            c.execute("ALTER TABLE cameras ADD COLUMN last_captured_ts TEXT")
+            c.commit()
+        except sqlite3.OperationalError:
+            pass
         c.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS motion_scores (
+                camera_id INTEGER NOT NULL,
+                ts        TEXT    NOT NULL,
+                score     REAL    NOT NULL,
+                PRIMARY KEY (camera_id, ts)
+            )
+        """)
         c.commit()
     _seed()
     _purge_placeholder_stills()
+    _backfill_last_captured_ts()
+
+
+def _backfill_last_captured_ts():
+    if not STILLS_DIR.exists():
+        return
+    updates = []
+    for cam_dir in STILLS_DIR.iterdir():
+        if not cam_dir.is_dir():
+            continue
+        try:
+            cam_id = int(cam_dir.name)
+        except ValueError:
+            continue
+        files = sorted(cam_dir.glob("[0-9]*.jpg"))
+        if files:
+            updates.append((files[-1].stem, cam_id))
+    if updates:
+        with _conn() as c:
+            c.executemany(
+                "UPDATE cameras SET last_captured_ts=? WHERE id=? AND last_captured_ts IS NULL",
+                updates,
+            )
+            c.commit()
 
 
 def _purge_placeholder_stills():
@@ -173,12 +213,36 @@ async def _fetch(client: httpx.AsyncClient, url: str) -> bytes | None:
         return None
 
 
+_THUMB = (64, 48)
+
+def _motion_score(old_bytes: bytes, new_bytes: bytes) -> float:
+    try:
+        old = Image.open(io.BytesIO(old_bytes)).convert("L").resize(_THUMB)
+        new = Image.open(io.BytesIO(new_bytes)).convert("L").resize(_THUMB)
+        diff = ImageChops.difference(old, new)
+        px = diff.getdata()
+        return sum(px) / len(px)
+    except Exception:
+        return 0.0
+
+
 def _prune(cam_dir: Path, keep: int):
     if keep <= 0:
         return
     files = sorted(cam_dir.glob("[0-9]*.jpg"))
-    for f in files[:-keep]:
+    to_delete = files[:-keep] if keep else files
+    if not to_delete:
+        return
+    for f in to_delete:
         f.unlink(missing_ok=True)
+    cam_id = int(cam_dir.name)
+    tss = [f.stem for f in to_delete]
+    with _conn() as c:
+        c.executemany(
+            "DELETE FROM motion_scores WHERE camera_id=? AND ts=?",
+            [(cam_id, ts) for ts in tss],
+        )
+        c.commit()
 
 
 async def capture_loop():
@@ -202,14 +266,31 @@ async def capture_loop():
         ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
         cam_dir = STILLS_DIR / str(cam["id"])
         cam_dir.mkdir(parents=True, exist_ok=True)
+
+        latest = cam_dir / "latest.jpg"
+        prev_bytes = None
+        try:
+            if latest.exists():
+                prev_bytes = latest.read_bytes()
+        except OSError:
+            pass
+
         (cam_dir / f"{ts}.jpg").write_bytes(blob)
-        (cam_dir / "latest.jpg").write_bytes(blob)
+        latest.write_bytes(blob)
         _prune(cam_dir, cam["keep_last_n"])
-        if cam.get("last_capture_ok") != 1:
-            with _conn() as c:
-                c.execute("UPDATE cameras SET last_capture_ok=1 WHERE id=?", (cam["id"],))
-                c.commit()
-        msg = json.dumps({"camera_id": cam["id"], "ts": ts})
+
+        score = _motion_score(prev_bytes, blob) if prev_bytes else 0.0
+        with _conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO motion_scores (camera_id, ts, score) VALUES (?,?,?)",
+                (cam["id"], ts, score),
+            )
+            c.execute(
+                "UPDATE cameras SET last_captured_ts=?, last_capture_ok=1 WHERE id=?",
+                (ts, cam["id"]),
+            )
+            c.commit()
+        msg = json.dumps({"camera_id": cam["id"], "ts": ts, "motion": round(score, 1)})
         dead = []
         for q in list(_subs):
             try:
@@ -403,6 +484,16 @@ def list_stills(cam_id: int):
     if not cam_dir.exists():
         return []
     return sorted(f.stem for f in cam_dir.glob("[0-9]*.jpg"))[-2000:]
+
+
+@app.get("/api/cameras/{cam_id}/motion")
+def get_motion(cam_id: int):
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts, score FROM motion_scores WHERE camera_id=? ORDER BY ts",
+            (cam_id,),
+        ).fetchall()
+    return {r["ts"]: round(r["score"], 1) for r in rows}
 
 
 @app.get("/api/events/stills")
